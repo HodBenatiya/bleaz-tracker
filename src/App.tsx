@@ -1,0 +1,165 @@
+import { useState, useEffect, useCallback } from 'react'
+import type { View, DailyReport, SavedPosition, PipelineCompany, Task } from './types'
+import {
+  loadReports, upsertReport, deleteReport,
+  loadPositions, savePositions,
+  loadPipeline,  savePipeline,
+  loadTasks,     saveTasks,
+  migrateFromLocalStorage,
+} from './utils/storage'
+import { supabase } from './utils/supabase'
+import Layout from './components/Layout'
+import Dashboard from './components/Dashboard'
+import DailyForm from './components/DailyForm'
+import History from './components/History'
+import PositionsManager from './components/PositionsManager'
+import Pipeline from './components/Pipeline'
+import Tasks from './components/Tasks'
+
+// ── Local upsert helper (keeps state consistent before DB responds) ──
+function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[] {
+  const byId   = reports.findIndex(r => r.id === report.id)
+  if (byId >= 0) { const u = [...reports]; u[byId] = report; return u }
+  const byDate = reports.findIndex(r => r.date === report.date)
+  if (byDate >= 0) { const u = [...reports]; u[byDate] = { ...report, id: reports[byDate].id }; return u }
+  return [...reports, report]
+}
+
+export default function App() {
+  const [view,          setView]          = useState<View>('dashboard')
+  const [reports,       setReports]       = useState<DailyReport[]>([])
+  const [positions,     setPositions]     = useState<SavedPosition[]>([])
+  const [pipeline,      setPipeline]      = useState<PipelineCompany[]>([])
+  const [tasks,         setTasks]         = useState<Task[]>([])
+  const [editingReport, setEditingReport] = useState<DailyReport | null>(null)
+  const [loading,       setLoading]       = useState(true)
+
+  // ── Initial data load + optional localStorage migration ──
+  useEffect(() => {
+    async function init() {
+      setLoading(true)
+      const [r, p, pl, t] = await Promise.all([
+        loadReports(), loadPositions(), loadPipeline(), loadTasks(),
+      ])
+
+      if (r.length === 0 && p.length === 0 && pl.length === 0 && t.length === 0) {
+        // DB is empty — try migrating from localStorage
+        const migrated = await migrateFromLocalStorage()
+        setReports(migrated.reports)
+        setPositions(migrated.positions)
+        setPipeline(migrated.pipeline)
+        setTasks(migrated.tasks)
+      } else {
+        setReports(r)
+        setPositions(p)
+        setPipeline(pl)
+        setTasks(t)
+      }
+      setLoading(false)
+    }
+    init()
+  }, [])
+
+  // ── Real-time subscriptions (sync between Hod and Tzachi) ──
+  useEffect(() => {
+    const channel = supabase.channel('bleaz-realtime')
+
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reports' }, payload => {
+        const report = (payload.new as { data: DailyReport }).data
+        setReports(prev => prev.some(r => r.id === report.id) ? prev : [...prev, report])
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'reports' }, payload => {
+        const report = (payload.new as { data: DailyReport }).data
+        setReports(prev => prev.map(r => r.id === report.id ? report : r))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reports' }, payload => {
+        setReports(prev => prev.filter(r => r.id !== (payload.old as { id: string }).id))
+      })
+
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, () => {
+        loadPositions().then(setPositions)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pipeline_companies' }, () => {
+        loadPipeline().then(setPipeline)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
+        loadTasks().then(setTasks)
+      })
+
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+
+  // ── Handlers ──
+  const handleSave = useCallback((report: DailyReport) => {
+    setReports(prev => localUpsert(prev, report))
+    upsertReport(report)
+  }, [])
+
+  const handleDelete = useCallback((id: string) => {
+    setReports(prev => prev.filter(r => r.id !== id))
+    deleteReport(id)
+  }, [])
+
+  const handleEdit    = useCallback((report: DailyReport) => { setEditingReport(report); setView('form') }, [])
+  const handleNewDay  = useCallback(() => { setEditingReport(null); setView('form') }, [])
+  const handleNav     = useCallback((v: View) => { setView(v); if (v !== 'form') setEditingReport(null) }, [])
+
+  const handlePositionsChange = useCallback((newPositions: SavedPosition[]) => {
+    setPositions(newPositions)
+    savePositions(newPositions)
+  }, [])
+
+  const handlePipelineChange = useCallback((newPipeline: PipelineCompany[]) => {
+    setPipeline(newPipeline)
+    savePipeline(newPipeline)
+  }, [])
+
+  const handleTasksChange = useCallback((newTasks: Task[]) => {
+    setTasks(newTasks)
+    saveTasks(newTasks)
+  }, [])
+
+  // ── Loading screen ──
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-600 font-medium">טוען נתונים...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <Layout view={view} onNav={handleNav} onNewDay={handleNewDay} tasks={tasks}>
+      {view === 'dashboard' && (
+        <Dashboard
+          reports={reports}
+          positions={positions}
+          pipeline={pipeline}
+          tasks={tasks}
+          onNav={v => handleNav(v)}
+        />
+      )}
+      {view === 'form' && (
+        <DailyForm
+          reports={reports}
+          savedPositions={positions}
+          pipeline={pipeline}
+          editingReport={editingReport}
+          onSave={handleSave}
+          onGoToPositions={() => handleNav('positions')}
+        />
+      )}
+      {view === 'positions' && (
+        <PositionsManager positions={positions} reports={reports} onChange={handlePositionsChange} />
+      )}
+      {view === 'pipeline'  && <Pipeline pipeline={pipeline} onChange={handlePipelineChange} />}
+      {view === 'tasks'     && <Tasks    tasks={tasks}       onChange={handleTasksChange} />}
+      {view === 'history'   && <History  reports={reports}   onEdit={handleEdit} onDelete={handleDelete} />}
+    </Layout>
+  )
+}
