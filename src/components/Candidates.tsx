@@ -269,7 +269,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
       </div>
 
       {/* ── kanban view ── */}
-      {viewMode === 'kanban' && (
+      {viewMode === 'kanban' && !filterStatus && (
         <div className="overflow-x-auto pb-4">
           <div className="flex gap-3 min-w-max">
             {COLUMNS.map(col => {
@@ -298,6 +298,34 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
               )
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── filtered grid (כשיש סינון סטטוס פעיל) ── */}
+      {viewMode === 'kanban' && filterStatus && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${CANDIDATE_STATUS_COLORS[filterStatus]}`}>
+              {CANDIDATE_STATUS_LABELS[filterStatus]}
+            </span>
+            <span className="text-sm text-slate-500">{filtered.length} מועמדים</span>
+          </div>
+          {filtered.length === 0 ? (
+            <div className="text-center py-16 text-slate-400">אין מועמדים בסטטוס זה</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {filtered.map(c => (
+                <CandidateCard
+                  key={c.id}
+                  candidate={c}
+                  statusOrder={STATUS_ORDER}
+                  onMove={moveStatus}
+                  onEdit={openEdit}
+                  onDelete={remove}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
