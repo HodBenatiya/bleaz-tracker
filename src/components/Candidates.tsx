@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Plus, Phone, X, ChevronLeft, ChevronRight, Trash2, Edit2, Search, Calendar, MapPin, Briefcase, User } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { Plus, Phone, X, ChevronLeft, ChevronRight, Trash2, Edit2, Search, Calendar, MapPin, Briefcase, User, Download, Upload } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 
@@ -116,6 +117,9 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
   const [search,       setSearch]       = useState('')
   const [viewMode,     setViewMode]     = useState<'kanban' | 'list' | 'nona'>('kanban')
   const [form,         setForm]         = useState<Candidate>(newCandidate())
+  const [showImport,   setShowImport]   = useState(false)
+  const [importRows,   setImportRows]   = useState<Record<string, string>[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const searchedCity = Object.keys(CITY_COORDS).find(
     city => city === search.trim() || city.includes(search.trim()) && search.trim().length >= 2
@@ -201,6 +205,73 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
     setShowForm(false)
   }
 
+  // ── Export ──
+  const exportToExcel = () => {
+    const rows = filtered.map(c => ({
+      'שם':           c.name,
+      'טלפון':        c.phone,
+      'גיל':          c.age ?? '',
+      'עיר':          c.city ?? '',
+      'סטטוס':        CANDIDATE_STATUS_LABELS[c.status],
+      'סוג משרה':     c.positionType,
+      'חברה משויכת':  positions.find(p => p.id === c.savedPositionId)?.companyName ?? '',
+      'מקור':         c.source,
+      'תאריך ראיון':  c.interviewDate ?? '',
+      'תאריך התחלה':  c.startDate ?? '',
+      'נונה':         c.nonaStatus,
+      'הערות':        c.notes,
+      'תאריך כניסה':  c.createdAt.split('T')[0],
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'מועמדים')
+    const label = filterStatus ? CANDIDATE_STATUS_LABELS[filterStatus] : 'כל המועמדים'
+    XLSX.writeFile(wb, `מועמדים_${label}_${new Date().toLocaleDateString('he-IL').replace(/\//g,'-')}.xlsx`)
+  }
+
+  // ── Import ──
+  const IMPORT_COL_MAP: Record<string, keyof Candidate> = {
+    'שם': 'name', 'name': 'name', 'full name': 'name', 'שם מלא': 'name',
+    'טלפון': 'phone', 'phone': 'phone', 'mobile': 'phone', 'נייד': 'phone',
+    'גיל': 'age', 'age': 'age',
+    'עיר': 'city', 'city': 'city', 'עיר מגורים': 'city',
+    'מקור': 'source', 'source': 'source',
+    'סוג משרה': 'positionType', 'position': 'positionType', 'תפקיד': 'positionType',
+    'הערות': 'notes', 'notes': 'notes', 'comment': 'notes',
+  }
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const wb = XLSX.read(ev.target?.result, { type: 'binary' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' })
+      setImportRows(raw)
+      setShowImport(true)
+    }
+    reader.readAsBinaryString(file)
+    e.target.value = ''
+  }
+
+  const confirmImport = () => {
+    const newCandidates: Candidate[] = importRows.map(row => {
+      const c = newCandidate()
+      for (const [col, val] of Object.entries(row)) {
+        const field = IMPORT_COL_MAP[col.trim().toLowerCase()] ?? IMPORT_COL_MAP[col.trim()]
+        if (!field || !val) continue
+        if (field === 'age') c.age = Number(val) || undefined
+        else (c as unknown as Record<string, string>)[field] = String(val)
+      }
+      return c
+    }).filter(c => c.name.trim() || c.phone.trim())
+
+    onChange([...candidates, ...newCandidates])
+    setShowImport(false)
+    setImportRows([])
+  }
+
   return (
     <div className="space-y-4">
 
@@ -263,6 +334,24 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
             🟣 נונה
           </button>
         </div>
+
+        <button
+          onClick={exportToExcel}
+          title={filterStatus ? `ייצוא ${CANDIDATE_STATUS_LABELS[filterStatus]}` : 'ייצוא כל המועמדים'}
+          className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+        >
+          <Download size={15} />
+          ייצוא
+        </button>
+
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+        >
+          <Upload size={15} />
+          ייבוא
+        </button>
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImportFile} />
 
         <button onClick={openNew} className="btn-primary flex items-center gap-1.5">
           <Plus size={16} /> מועמד חדש
@@ -692,6 +781,68 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
               <button onClick={() => setShowForm(false)} className="btn-secondary flex-1">
                 ביטול
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── import modal ── */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden" dir="rtl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">ייבוא מועמדים מאקסל</h2>
+                <p className="text-sm text-slate-500 mt-0.5">{importRows.length} שורות זוהו — בדוק לפני ייבוא</p>
+              </div>
+              <button onClick={() => { setShowImport(false); setImportRows([]) }} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-auto max-h-96 p-4">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50">
+                    {importRows[0] && Object.keys(importRows[0]).map(col => (
+                      <th key={col} className="text-right px-3 py-2 font-semibold text-slate-600 border border-slate-200 whitespace-nowrap">
+                        {col}
+                        {IMPORT_COL_MAP[col.trim().toLowerCase()] || IMPORT_COL_MAP[col.trim()]
+                          ? <span className="text-brand-500 mr-1">✓</span>
+                          : <span className="text-slate-300 mr-1 text-[10px]">(מדולג)</span>}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importRows.slice(0, 10).map((row, i) => (
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                      {Object.values(row).map((val, j) => (
+                        <td key={j} className="px-3 py-1.5 text-slate-700 border border-slate-100 max-w-[150px] truncate">
+                          {String(val)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {importRows.length > 10 && (
+                <p className="text-xs text-slate-400 mt-2 text-center">ועוד {importRows.length - 10} שורות...</p>
+              )}
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <p className="text-xs text-slate-500">
+                עמודות עם ✓ יתמפו אוטומטית לשדות המועמד. סטטוס ברירת מחדל: חדש.
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => { setShowImport(false); setImportRows([]) }} className="btn-secondary">
+                  ביטול
+                </button>
+                <button onClick={confirmImport} className="btn-primary">
+                  <Upload size={15} /> ייבא {importRows.length} מועמדים
+                </button>
+              </div>
             </div>
           </div>
         </div>
