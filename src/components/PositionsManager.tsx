@@ -1,13 +1,19 @@
 import { useState } from 'react'
-import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, ChevronDown, ChevronUp } from 'lucide-react'
-import type { SavedPosition } from '../types'
+import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, ChevronDown, ChevronUp, Phone } from 'lucide-react'
+import type { SavedPosition, Candidate, CandidateStatus } from '../types'
+import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import { generateId, formatCurrency, calcCostPerLead } from '../utils/helpers'
 
 interface Props {
-  positions: SavedPosition[]
-  reports:   { jobs: { savedPositionId?: string; leadsIn: number; relevantLeads: number; campaignCost: number }[] }[]
-  onChange:  (positions: SavedPosition[]) => void
+  positions:  SavedPosition[]
+  reports:    { jobs: { savedPositionId?: string; leadsIn: number; relevantLeads: number; campaignCost: number }[] }[]
+  candidates: Candidate[]
+  onChange:   (positions: SavedPosition[]) => void
 }
+
+const POSITION_RELEVANT_STATUSES: CandidateStatus[] = [
+  'sent_to_client', 'interview_scheduled', 'started_working', 'placement_complete',
+]
 
 const EMPTY: Omit<SavedPosition, 'id' | 'createdAt' | 'isActive' | 'funnelSentToClient' | 'funnelInterviews' | 'funnelAccepted' | 'funnelConfirmed'> = {
   companyName: '', positionTitle: '', city: '',
@@ -25,7 +31,7 @@ function numField(label: string, value: number, onChange: (v: number) => void, s
   )
 }
 
-export default function PositionsManager({ positions, reports, onChange }: Props) {
+export default function PositionsManager({ positions, reports, candidates, onChange }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isAdding,  setIsAdding]  = useState(false)
   const [form,      setForm]      = useState({ ...EMPTY })
@@ -173,6 +179,71 @@ export default function PositionsManager({ positions, reports, onChange }: Props
                       <PositionForm form={form} onChange={setForm} onSave={handleSaveEdit} onCancel={cancelEdit} title="עריכה" />
                     ) : (
                       <>
+                        {/* Linked candidates */}
+                        {(() => {
+                          const linked = candidates.filter(c => c.savedPositionId === pos.id)
+                          if (linked.length === 0) return null
+                          const byStatus = POSITION_RELEVANT_STATUSES.map(s => ({
+                            status: s,
+                            items: linked.filter(c => c.status === s),
+                          })).filter(g => g.items.length > 0)
+                          const otherItems = linked.filter(c => !POSITION_RELEVANT_STATUSES.includes(c.status))
+                          return (
+                            <div className="mb-4">
+                              <p className="text-xs font-semibold text-slate-500 mb-2">
+                                מועמדים משויכים ({linked.length})
+                              </p>
+                              <div className="space-y-2">
+                                {byStatus.map(group => (
+                                  <div key={group.status}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${CANDIDATE_STATUS_COLORS[group.status]}`}>
+                                        {CANDIDATE_STATUS_LABELS[group.status]}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 pr-2">
+                                      {group.items.map(c => (
+                                        <div key={c.id} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 border border-slate-200">
+                                          <span className="text-sm font-medium text-slate-800">{c.name}</span>
+                                          <a href={`tel:${c.phone}`} className="flex items-center gap-0.5 text-xs text-brand-600 hover:underline">
+                                            <Phone size={10} />{c.phone}
+                                          </a>
+                                          {c.interviewDate && (
+                                            <span className="text-xs text-indigo-600">
+                                              ראיון: {new Date(c.interviewDate + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
+                                            </span>
+                                          )}
+                                          {c.startDate && (
+                                            <span className="text-xs text-emerald-600">
+                                              התחיל: {new Date(c.startDate + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
+                                            </span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                                {otherItems.length > 0 && (
+                                  <div>
+                                    <p className="text-xs text-slate-400 mb-1">בתהליך</p>
+                                    <div className="flex flex-wrap gap-2 pr-2">
+                                      {otherItems.map(c => (
+                                        <div key={c.id} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 border border-slate-200">
+                                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${CANDIDATE_STATUS_COLORS[c.status]}`}>
+                                            {CANDIDATE_STATUS_LABELS[c.status]}
+                                          </span>
+                                          <span className="text-sm font-medium text-slate-800">{c.name}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="border-t border-slate-100 mt-3" />
+                            </div>
+                          )
+                        })()}
+
                         {/* Campaign stats (read-only, from daily reports) */}
                         <div className="mb-4">
                           <p className="text-xs font-semibold text-slate-500 mb-2">נתוני קמפיין (מהדיווחים היומיים)</p>

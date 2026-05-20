@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { View, DailyReport, SavedPosition, PipelineCompany, Task } from './types'
+import type { View, DailyReport, SavedPosition, PipelineCompany, Task, Candidate } from './types'
 import {
   loadReports, upsertReport, deleteReport,
   loadPositions, savePositions,
   loadPipeline,  savePipeline,
   loadTasks,     saveTasks,
+  loadCandidates, upsertCandidate, deleteCandidate,
   migrateFromLocalStorage,
 } from './utils/storage'
 import { supabase } from './utils/supabase'
@@ -15,6 +16,8 @@ import History from './components/History'
 import PositionsManager from './components/PositionsManager'
 import Pipeline from './components/Pipeline'
 import Tasks from './components/Tasks'
+import Candidates from './components/Candidates'
+import MarketingROI from './components/MarketingROI'
 
 // ── Local upsert helper (keeps state consistent before DB responds) ──
 function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[] {
@@ -31,6 +34,7 @@ export default function App() {
   const [positions,     setPositions]     = useState<SavedPosition[]>([])
   const [pipeline,      setPipeline]      = useState<PipelineCompany[]>([])
   const [tasks,         setTasks]         = useState<Task[]>([])
+  const [candidates,    setCandidates]    = useState<Candidate[]>([])
   const [editingReport, setEditingReport] = useState<DailyReport | null>(null)
   const [loading,       setLoading]       = useState(true)
 
@@ -38,8 +42,8 @@ export default function App() {
   useEffect(() => {
     async function init() {
       setLoading(true)
-      const [r, p, pl, t] = await Promise.all([
-        loadReports(), loadPositions(), loadPipeline(), loadTasks(),
+      const [r, p, pl, t, c] = await Promise.all([
+        loadReports(), loadPositions(), loadPipeline(), loadTasks(), loadCandidates(),
       ])
 
       if (r.length === 0 && p.length === 0 && pl.length === 0 && t.length === 0) {
@@ -55,6 +59,7 @@ export default function App() {
         setPipeline(pl)
         setTasks(t)
       }
+      setCandidates(c)
       setLoading(false)
     }
     init()
@@ -84,6 +89,9 @@ export default function App() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
         loadTasks().then(setTasks)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'candidates' }, () => {
+        loadCandidates().then(setCandidates)
       })
 
       .subscribe()
@@ -121,6 +129,19 @@ export default function App() {
     saveTasks(newTasks)
   }, [])
 
+  const handleCandidatesChange = useCallback(async (newCandidates: Candidate[]) => {
+    const prevIds = candidates.map(c => c.id)
+    const newIds  = newCandidates.map(c => c.id)
+    try {
+      await Promise.all(newCandidates.map(c => upsertCandidate(c)))
+      await Promise.all(prevIds.filter(id => !newIds.includes(id)).map(id => deleteCandidate(id)))
+      setCandidates(newCandidates)
+    } catch (err) {
+      console.error('שגיאה בשמירת מועמד:', err)
+      alert('שגיאה בשמירה: ' + (err instanceof Error ? err.message : 'נסה שוב'))
+    }
+  }, [candidates])
+
   // ── Loading screen ──
   if (loading) {
     return (
@@ -141,6 +162,7 @@ export default function App() {
           positions={positions}
           pipeline={pipeline}
           tasks={tasks}
+          candidates={candidates}
           onNav={v => handleNav(v)}
         />
       )}
@@ -155,11 +177,13 @@ export default function App() {
         />
       )}
       {view === 'positions' && (
-        <PositionsManager positions={positions} reports={reports} onChange={handlePositionsChange} />
+        <PositionsManager positions={positions} reports={reports} candidates={candidates} onChange={handlePositionsChange} />
       )}
-      {view === 'pipeline'  && <Pipeline pipeline={pipeline} onChange={handlePipelineChange} />}
-      {view === 'tasks'     && <Tasks    tasks={tasks}       onChange={handleTasksChange} />}
-      {view === 'history'   && <History  reports={reports}   onEdit={handleEdit} onDelete={handleDelete} />}
+      {view === 'pipeline'   && <Pipeline pipeline={pipeline} onChange={handlePipelineChange} />}
+      {view === 'tasks'      && <Tasks    tasks={tasks}       onChange={handleTasksChange} />}
+      {view === 'history'    && <History  reports={reports}   onEdit={handleEdit} onDelete={handleDelete} />}
+      {view === 'candidates' && <Candidates candidates={candidates} positions={positions} onChange={handleCandidatesChange} />}
+      {view === 'marketing'  && <MarketingROI reports={reports} candidates={candidates} positions={positions} />}
     </Layout>
   )
 }

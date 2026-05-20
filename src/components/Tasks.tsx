@@ -18,7 +18,7 @@ const PRIORITY_COLORS: Record<TaskPriority, string> = {
 
 const EMPTY = {
   title: '', assignee: 'both' as Task['assignee'],
-  priority: 'medium' as TaskPriority, dueDate: todayISO(),
+  priority: 'medium' as TaskPriority, dueDate: todayISO(), dueTime: '',
 }
 
 export default function Tasks({ tasks, onChange }: Props) {
@@ -31,7 +31,11 @@ export default function Tasks({ tasks, onChange }: Props) {
 
   function add() {
     if (!form.title.trim()) return
-    const task: Task = { id: generateId(), ...form, done: false, createdAt: new Date().toISOString() }
+    const task: Task = {
+      id: generateId(), ...form,
+      dueTime: form.dueTime || undefined,
+      done: false, createdAt: new Date().toISOString(),
+    }
     onChange([task, ...tasks])
     setIsAdding(false)
     setForm({ ...EMPTY })
@@ -88,7 +92,7 @@ export default function Tasks({ tasks, onChange }: Props) {
                 onKeyDown={e => e.key === 'Enter' && add()}
               />
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
                 <label className="label">אחראי</label>
                 <select className="input-field text-sm" value={form.assignee}
@@ -111,6 +115,11 @@ export default function Tasks({ tasks, onChange }: Props) {
                 <label className="label">תאריך יעד</label>
                 <input type="date" className="input-field text-sm" value={form.dueDate}
                   onChange={e => setForm(f => ({ ...f, dueDate: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">שעה (אופציונלי)</label>
+                <input type="time" className="input-field text-sm" value={form.dueTime}
+                  onChange={e => setForm(f => ({ ...f, dueTime: e.target.value }))} />
               </div>
             </div>
             <div className="flex gap-2">
@@ -187,6 +196,7 @@ export default function Tasks({ tasks, onChange }: Props) {
                         {isDueToday && <Clock size={11} />}
                         {isOverdue ? 'באיחור · ' : isDueToday ? 'היום · ' : ''}
                         {new Date(task.dueDate + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
+                        {task.dueTime && <span className="font-semibold">· {task.dueTime}</span>}
                       </span>
                     </div>
                   </div>

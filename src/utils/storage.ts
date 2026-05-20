@@ -1,4 +1,4 @@
-import type { DailyReport, SavedPosition, PipelineCompany, Task } from '../types'
+import type { DailyReport, SavedPosition, PipelineCompany, Task, Candidate } from '../types'
 import { supabase } from './supabase'
 
 // ── Reports ──────────────────────────────────────────────────────────────────
@@ -107,6 +107,28 @@ export async function saveTasks(tasks: Task[]): Promise<void> {
     )
     if (error) console.error('saveTasks:', error)
   }
+}
+
+// ── Candidates ────────────────────────────────────────────────────────────────
+
+export async function loadCandidates(): Promise<Candidate[]> {
+  const { data, error } = await supabase.from('candidates').select('data').order('updated_at', { ascending: false })
+  if (error) { console.error('loadCandidates:', error); return [] }
+  return (data ?? []).map(row => row.data as Candidate)
+}
+
+export async function upsertCandidate(candidate: Candidate): Promise<void> {
+  const { error } = await supabase.from('candidates').upsert({
+    id:         candidate.id,
+    data:       candidate,
+    updated_at: new Date().toISOString(),
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteCandidate(id: string): Promise<void> {
+  const { error } = await supabase.from('candidates').delete().eq('id', id)
+  if (error) console.error('deleteCandidate:', error)
 }
 
 // ── One-time migration from localStorage ─────────────────────────────────────
