@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Phone, X, ChevronLeft, ChevronRight, Trash2, Edit2, Search } from 'lucide-react'
+import { Plus, Phone, X, ChevronLeft, ChevronRight, Trash2, Edit2, Search, Calendar, MapPin, Briefcase, User } from 'lucide-react'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 
@@ -111,6 +111,7 @@ function formatDateHe(iso: string): string {
 export default function Candidates({ candidates, positions, onChange }: Props) {
   const [showForm,     setShowForm]     = useState(false)
   const [editing,      setEditing]      = useState<Candidate | null>(null)
+  const [viewing,      setViewing]      = useState<Candidate | null>(null)
   const [filterStatus, setFilterStatus] = useState<CandidateStatus | ''>('')
   const [search,       setSearch]       = useState('')
   const [viewMode,     setViewMode]     = useState<'kanban' | 'list' | 'nona'>('kanban')
@@ -291,6 +292,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                         onMove={moveStatus}
                         onEdit={openEdit}
                         onDelete={remove}
+                        onView={setViewing}
                       />
                     ))}
                   </div>
@@ -322,6 +324,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   onMove={moveStatus}
                   onEdit={openEdit}
                   onDelete={remove}
+                  onView={setViewing}
                 />
               ))}
             </div>
@@ -701,6 +704,149 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
       >
         <Plus size={24} />
       </button>
+
+      {/* ── candidate detail modal ── */}
+      {viewing && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+          onClick={() => setViewing(null)}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
+            dir="rtl"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* header */}
+            <div className={`px-6 py-4 flex items-center justify-between ${
+              COLUMNS.find(c => c.status === viewing.status)?.headerColor ?? 'bg-slate-600'
+            }`}>
+              <div>
+                <h2 className="text-xl font-bold text-white">{viewing.name}</h2>
+                <span className="text-sm text-white/80">{CANDIDATE_STATUS_LABELS[viewing.status]}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setViewing(null); openEdit(viewing) }}
+                  className="p-2 rounded-lg bg-white/20 text-white hover:bg-white/30 transition"
+                >
+                  <Edit2 size={16} />
+                </button>
+                <button onClick={() => setViewing(null)} className="p-2 rounded-lg bg-white/20 text-white hover:bg-white/30 transition">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* body */}
+            <div className="p-6 space-y-4">
+              {/* phone */}
+              <a href={`tel:${viewing.phone}`} className="flex items-center gap-3 text-brand-600 hover:underline">
+                <Phone size={18} />
+                <span className="text-lg font-mono font-semibold">{viewing.phone}</span>
+              </a>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* age + city */}
+                {(viewing.age || viewing.city) && (
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <MapPin size={15} className="text-slate-400 shrink-0" />
+                    <span className="text-sm">
+                      {viewing.age ? `גיל ${viewing.age}` : ''}
+                      {viewing.age && viewing.city ? ' · ' : ''}
+                      {viewing.city || ''}
+                    </span>
+                  </div>
+                )}
+
+                {/* source */}
+                {viewing.source && (
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <User size={15} className="text-slate-400 shrink-0" />
+                    <span className="text-sm">{viewing.source}</span>
+                  </div>
+                )}
+
+                {/* position type */}
+                {viewing.positionType && (
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <Briefcase size={15} className="text-slate-400 shrink-0" />
+                    <span className="text-sm">{viewing.positionType}</span>
+                  </div>
+                )}
+
+                {/* linked position */}
+                {viewing.savedPositionId && (() => {
+                  const pos = positions.find(p => p.id === viewing.savedPositionId)
+                  return pos ? (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <Briefcase size={15} className="text-brand-500 shrink-0" />
+                      <span className="text-sm font-medium text-brand-700">{pos.companyName}{pos.positionTitle ? ` · ${pos.positionTitle}` : ''}</span>
+                    </div>
+                  ) : null
+                })()}
+              </div>
+
+              {/* dates */}
+              {(viewing.interviewDate || viewing.startDate) && (
+                <div className="flex gap-4 flex-wrap">
+                  {viewing.interviewDate && (
+                    <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg">
+                      <Calendar size={14} />
+                      <span className="text-sm font-medium">ראיון: {formatDateHe(viewing.interviewDate)}</span>
+                    </div>
+                  )}
+                  {viewing.startDate && (
+                    <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg">
+                      <Calendar size={14} />
+                      <span className="text-sm font-medium">התחיל: {formatDateHe(viewing.startDate)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* nona status */}
+              {viewing.nonaStatus && (() => {
+                const ns = NONA_STATUSES.find(s => s.value === viewing.nonaStatus)
+                return ns ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-500">נונה:</span>
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ns.color}`}>{ns.label}</span>
+                  </div>
+                ) : null
+              })()}
+
+              {/* notes */}
+              {viewing.notes && (
+                <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  {viewing.notes}
+                </div>
+              )}
+
+              {/* meta */}
+              <div className="flex justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
+                <span>נכנס: {formatDateHe(viewing.createdAt.split('T')[0])}</span>
+                <span>עדכון: {formatDateHe(viewing.updatedAt.split('T')[0])}</span>
+              </div>
+            </div>
+
+            {/* footer actions */}
+            <div className="px-6 pb-5 flex gap-3">
+              <button
+                onClick={() => { setViewing(null); openEdit(viewing) }}
+                className="btn-primary flex-1"
+              >
+                <Edit2 size={15} /> ערוך מועמד
+              </button>
+              <button
+                onClick={() => { remove(viewing.id); setViewing(null) }}
+                className="px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -719,13 +865,14 @@ function StatChip({ label, value, color, bg }: { label: string; value: number; c
 // ── CandidateCard ─────────────────────────────────────────────────────────────
 
 function CandidateCard({
-  candidate, statusOrder, onMove, onEdit, onDelete
+  candidate, statusOrder, onMove, onEdit, onDelete, onView
 }: {
   candidate:   Candidate
   statusOrder: CandidateStatus[]
   onMove:      (c: Candidate, dir: 1 | -1) => void
   onEdit:      (c: Candidate) => void
   onDelete:    (id: string) => void
+  onView:      (c: Candidate) => void
 }) {
   const idx      = statusOrder.indexOf(candidate.status)
   const canPrev  = idx > 0
@@ -734,22 +881,25 @@ function CandidateCard({
   const daysStage = daysSince(candidate.updatedAt)
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-2.5 shadow-sm space-y-1.5">
+    <div
+      className="bg-white rounded-lg border border-slate-200 p-2.5 shadow-sm space-y-1.5 cursor-pointer hover:border-brand-300 hover:shadow-md transition-all"
+      onClick={() => onView(candidate)}
+    >
       {/* name + actions */}
       <div className="flex items-start justify-between gap-1">
         <span className="font-semibold text-slate-800 text-sm leading-tight">{candidate.name}</span>
         <div className="flex gap-0.5 shrink-0">
-          <button onClick={() => onEdit(candidate)} className="p-0.5 text-slate-300 hover:text-brand-600">
+          <button onClick={e => { e.stopPropagation(); onEdit(candidate) }} className="p-0.5 text-slate-300 hover:text-brand-600">
             <Edit2 size={12} />
           </button>
-          <button onClick={() => onDelete(candidate.id)} className="p-0.5 text-slate-300 hover:text-red-500">
+          <button onClick={e => { e.stopPropagation(); onDelete(candidate.id) }} className="p-0.5 text-slate-300 hover:text-red-500">
             <Trash2 size={12} />
           </button>
         </div>
       </div>
 
       {/* phone */}
-      <a href={`tel:${candidate.phone}`} className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
+      <a href={`tel:${candidate.phone}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
         <Phone size={11} />
         {candidate.phone}
       </a>
@@ -799,14 +949,14 @@ function CandidateCard({
       {/* move buttons */}
       <div className="flex justify-between">
         <button
-          onClick={() => onMove(candidate, -1)}
+          onClick={e => { e.stopPropagation(); onMove(candidate, -1) }}
           disabled={!canPrev}
           className="p-1 rounded text-slate-400 hover:text-slate-600 disabled:opacity-20"
         >
           <ChevronRight size={14} />
         </button>
         <button
-          onClick={() => onMove(candidate, 1)}
+          onClick={e => { e.stopPropagation(); onMove(candidate, 1) }}
           disabled={!canNext}
           className="p-1 rounded text-slate-400 hover:text-slate-600 disabled:opacity-20"
         >
