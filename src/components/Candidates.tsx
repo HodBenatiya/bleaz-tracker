@@ -447,7 +447,11 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                 const daysStage = daysSince(c.updatedAt)
                 return (
                   <tr key={c.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-800">{c.name}</td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => setViewing(c)} className="font-medium text-brand-700 hover:underline text-right">
+                        {c.name}
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <a href={`tel:${c.phone}`} className="text-brand-600 font-mono hover:underline flex items-center gap-1">
                         <Phone size={12} />{c.phone}
@@ -1038,7 +1042,12 @@ function CandidateCard({
     >
       {/* name + actions */}
       <div className="flex items-start justify-between gap-1">
-        <span className="font-semibold text-slate-800 text-sm leading-tight">{candidate.name}</span>
+        <button
+          onClick={e => { e.stopPropagation(); onView(candidate) }}
+          className="font-semibold text-brand-700 text-sm leading-tight hover:underline text-right"
+        >
+          {candidate.name}
+        </button>
         <div className="flex gap-0.5 shrink-0">
           <button onClick={e => { e.stopPropagation(); onEdit(candidate) }} className="p-0.5 text-slate-300 hover:text-brand-600">
             <Edit2 size={12} />
