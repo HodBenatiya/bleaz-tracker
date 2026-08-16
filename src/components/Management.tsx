@@ -782,14 +782,14 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
   const metric = (fn: (posId: string) => Candidate[]): PosGroup[] =>
     active.map(pos => ({ pos, cands: fn(pos.id) })).filter(g => g.cands.length > 0)
 
+  const IN_PROCESS = ['relevant','called','screening','call_scheduled','future_relevant']
+
   const rows: { label: string; color: string; hint?: 'interviewDate'|'startDate'; groups: PosGroup[] }[] = [
-    { label: 'בפייפליין כעת',  color: 'slate',  groups: metric(id => candidates.filter(c => PIPE.includes(c.status) && linked(c,id))) },
-    { label: 'לידים השבוע',    color: 'blue',   groups: metric(id => candidates.filter(c => inWeek(c.createdAt) && linked(c,id))) },
-    { label: 'לפני ראיון',     color: 'orange', groups: metric(id => candidates.filter(c => c.status==='sent_to_client' && linked(c,id))) },
-    { label: 'ראיון ראשון',    color: 'purple', hint: 'interviewDate', groups: metric(id => candidates.filter(c => hadItvW(c,id) && iCount(c)===1)) },
-    { label: 'ראיון שני+',     color: 'indigo', hint: 'interviewDate', groups: metric(id => candidates.filter(c => hadItvW(c,id) && iCount(c)>1)) },
-    { label: 'גויסו',          color: 'green',  hint: 'startDate',    groups: metric(id => candidates.filter(c => inWeek(c.startDate) && linked(c,id))) },
-    { label: 'נפסלו',          color: 'red',    groups: metric(id => candidates.filter(c => c.status==='irrelevant' && inWeek(c.updatedAt) && linked(c,id))) },
+    { label: 'לידים חדשים',  color: 'blue',   groups: metric(id => candidates.filter(c => inWeek(c.createdAt) && linked(c,id))) },
+    { label: 'נשלחו ללקוח',  color: 'orange', groups: metric(id => candidates.filter(c => c.status==='sent_to_client' && linked(c,id))) },
+    { label: 'בתהליך',       color: 'slate',  groups: metric(id => candidates.filter(c => IN_PROCESS.includes(c.status) && linked(c,id))) },
+    { label: 'נקבע ראיון',   color: 'purple', hint: 'interviewDate', groups: metric(id => candidates.filter(c => c.status==='interview_scheduled' && linked(c,id))) },
+    { label: 'נפסלו',        color: 'red',    groups: metric(id => candidates.filter(c => c.status==='irrelevant' && inWeek(c.updatedAt) && linked(c,id))) },
   ]
 
   return (
