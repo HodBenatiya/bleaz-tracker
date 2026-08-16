@@ -590,7 +590,7 @@ export default function Management({ candidates, positions, reports, onCandidate
       </div>
 
       {/* Weekly tracking */}
-      <WeeklySection candidates={candidates} positions={positions} />
+      <WeeklySection candidates={candidates} positions={positions} monthFilter={filter} />
 
       {/* Collections & Warranty table */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -750,16 +750,20 @@ function InvBtn({ active, color, onClick, children }: InvBtnProps) {
 
 // ── Weekly section ─────────────────────────────────────────────────────────────
 
-function WeeklySection({ candidates, positions }: { candidates: Candidate[]; positions: SavedPosition[] }) {
-  const [weekOffset, setWeekOffset] = useState(0)
-  const { start: wStart, end: wEnd, label: weekLabel } = getWeekBounds(weekOffset)
+type PosGroup = { pos: SavedPosition; cands: Candidate[] }
 
-  const fmt2     = (d: Date) => d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })
-  const weekRange = `${fmt2(wStart)} — ${fmt2(wEnd)}`
+function WeeklySection({ candidates, positions, monthFilter }: {
+  candidates:  Candidate[]
+  positions:   SavedPosition[]
+  monthFilter: MonthFilter
+}) {
+  const { start: wStart, end: wEnd } = getWeekBounds(0) // always current week
+  const fmt2 = (d: Date) => d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })
+  const wRange = `${fmt2(wStart)}–${fmt2(wEnd)}`
 
   const active = positions.filter(p => p.isActive)
 
-  const inWeek = (s?: string) => {
+  const inW = (s?: string) => {
     if (!s) return false
     const d = new Date(s.includes('T') ? s : s + 'T12:00:00')
     return d >= wStart && d <= wEnd
@@ -768,129 +772,130 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
     c.savedPositionIds?.includes(id) || c.savedPositionId === id ||
     (c.interviewHistory ?? []).some(h => h.savedPositionId === id)
   )
-  const iCount = (c: Candidate) => (c.interviewHistory?.length ?? 0) + (c.status === 'interview_scheduled' ? 1 : 0)
-  const hadItvW = (c: Candidate, id: string) => {
-    if (c.status === 'interview_scheduled' && c.interviewDate && inWeek(c.interviewDate) &&
-       (c.savedPositionIds?.includes(id) || c.savedPositionId === id)) return true
-    return (c.interviewHistory ?? []).some(h => h.savedPositionId === id && inWeek(h.date))
-  }
-
-  const PIPE = ['relevant','called','screening','call_scheduled','future_relevant','sent_to_client','interview_scheduled']
-
-  // Per metric: array of { pos, cands[] } — for tooltip breakdown by position
-  type PosGroup = { pos: SavedPosition; cands: Candidate[] }
-  const metric = (fn: (posId: string) => Candidate[]): PosGroup[] =>
+  const grp = (fn: (id: string) => Candidate[]): PosGroup[] =>
     active.map(pos => ({ pos, cands: fn(pos.id) })).filter(g => g.cands.length > 0)
 
   const IN_PROCESS = ['relevant','called','screening','call_scheduled','future_relevant']
 
-  const rows: { label: string; color: string; hint?: 'interviewDate'|'startDate'; groups: PosGroup[] }[] = [
-    { label: 'לידים חדשים',  color: 'blue',   groups: metric(id => candidates.filter(c => inWeek(c.createdAt) && linked(c,id))) },
-    { label: 'נשלחו ללקוח',  color: 'orange', groups: metric(id => candidates.filter(c => c.status==='sent_to_client' && linked(c,id))) },
-    { label: 'בתהליך',       color: 'slate',  groups: metric(id => candidates.filter(c => IN_PROCESS.includes(c.status) && linked(c,id))) },
-    { label: 'נקבע ראיון',   color: 'purple', hint: 'interviewDate', groups: metric(id => candidates.filter(c => c.status==='interview_scheduled' && linked(c,id))) },
-    { label: 'נפסלו',        color: 'red',    groups: metric(id => candidates.filter(c => c.status==='irrelevant' && inWeek(c.updatedAt) && linked(c,id))) },
+  const specs: { label: string; color: string; hint?: 'interviewDate'; monthly: PosGroup[]; weekly: PosGroup[] }[] = [
+    {
+      label:   'לידים חדשים',
+      color:   'blue',
+      monthly: grp(id => candidates.filter(c => inMonth(c.createdAt, monthFilter) && linked(c,id))),
+      weekly:  grp(id => candidates.filter(c => inW(c.createdAt) && linked(c,id))),
+    },
+    {
+      label:   'נשלחו ללקוח',
+      color:   'orange',
+      monthly: grp(id => candidates.filter(c => c.status==='sent_to_client' && linked(c,id))),
+      weekly:  grp(id => candidates.filter(c => c.status==='sent_to_client' && inW(c.createdAt) && linked(c,id))),
+    },
+    {
+      label:   'בתהליך',
+      color:   'slate',
+      monthly: grp(id => candidates.filter(c => IN_PROCESS.includes(c.status) && linked(c,id))),
+      weekly:  grp(id => candidates.filter(c => IN_PROCESS.includes(c.status) && inW(c.createdAt) && linked(c,id))),
+    },
+    {
+      label:   'נקבע ראיון',
+      color:   'purple',
+      hint:    'interviewDate',
+      monthly: grp(id => candidates.filter(c => c.status==='interview_scheduled' && linked(c,id))),
+      weekly:  grp(id => candidates.filter(c => c.status==='interview_scheduled' && inW(c.interviewDate) && linked(c,id))),
+    },
+    {
+      label:   'נפסלו',
+      color:   'red',
+      monthly: grp(id => candidates.filter(c => c.status==='irrelevant' && inMonth(c.updatedAt, monthFilter) && linked(c,id))),
+      weekly:  grp(id => candidates.filter(c => c.status==='irrelevant' && inW(c.updatedAt) && linked(c,id))),
+    },
   ]
+
+  const uniq = (gs: PosGroup[]) =>
+    [...new Map(gs.flatMap(g => g.cands).map(c => [c.id,c])).values()].length
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-bold text-slate-800">בקרה שבועית</h3>
-          <p className="text-xs text-slate-400 mt-0.5">{weekRange}</p>
-        </div>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setWeekOffset(o => o - 1)}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition">
-            <ChevronRight size={16} />
-          </button>
-          <div className="relative px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 min-w-28 text-center">
-            <span className="text-sm font-semibold text-slate-700">{weekLabel}</span>
-            {weekOffset === 0 && (
-              <span className="absolute -top-2 right-1 text-[9px] bg-brand-600 text-white px-1.5 py-0.5 rounded-full">עכשיו</span>
-            )}
+      <div className="flex items-center px-5 py-3 border-b border-slate-100">
+        <span className="font-bold text-slate-800 flex-1">בקרה</span>
+        <div className="flex gap-3">
+          <div className="w-16 text-center">
+            <div className="text-[11px] font-semibold text-slate-500">{monthLabel(monthFilter)}</div>
           </div>
-          <button onClick={() => setWeekOffset(o => Math.min(0, o + 1))} disabled={weekOffset >= 0}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition disabled:opacity-30">
-            <ChevronLeft size={16} />
-          </button>
+          <div className="w-16 text-center">
+            <div className="text-[11px] font-semibold text-brand-600">השבוע</div>
+            <div className="text-[9px] text-slate-400">{wRange}</div>
+          </div>
         </div>
       </div>
 
-      {/* Metric rows */}
+      {/* Rows */}
       <div className="divide-y divide-slate-100">
-        {rows.map(row => {
-          const total = [...new Map(row.groups.flatMap(g => g.cands).map(c => [c.id,c])).values()].length
-          return (
-            <WRow key={row.label} label={row.label} color={row.color}
-              hint={row.hint} total={total} groups={row.groups} />
-          )
-        })}
+        {specs.map(s => (
+          <div key={s.label} className="flex items-center px-5 py-2.5 hover:bg-slate-50 transition">
+            <span className="text-sm text-slate-600 flex-1">{s.label}</span>
+            <div className="flex gap-3">
+              <WNum groups={s.monthly} color={s.color} hint={s.hint} total={uniq(s.monthly)} />
+              <WNum groups={s.weekly}  color={s.color} hint={s.hint} total={uniq(s.weekly)} weekly />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
 }
 
-type PosGroup = { pos: SavedPosition; cands: Candidate[] }
-
-function WRow({ label, color, hint, total, groups }: {
-  label:  string
-  color:  string
-  hint?:  'interviewDate' | 'startDate'
-  total:  number
-  groups: PosGroup[]
+function WNum({ total, color, hint, groups, weekly }: {
+  total:   number
+  color:   string
+  hint?:   'interviewDate'
+  groups:  PosGroup[]
+  weekly?: boolean
 }) {
   const [show, setShow] = useState(false)
   const bg: Record<string,string> = {
     slate:  'bg-slate-100 text-slate-700',
-    blue:   'bg-blue-100  text-blue-700',
-    orange: 'bg-orange-100 text-orange-700',
-    purple: 'bg-purple-100 text-purple-700',
-    indigo: 'bg-indigo-100 text-indigo-700',
-    green:  'bg-green-100 text-green-700',
-    red:    'bg-red-100   text-red-700',
+    blue:   weekly ? 'bg-blue-600 text-white'   : 'bg-blue-100 text-blue-700',
+    orange: weekly ? 'bg-orange-500 text-white'  : 'bg-orange-100 text-orange-700',
+    purple: weekly ? 'bg-purple-600 text-white'  : 'bg-purple-100 text-purple-700',
+    red:    weekly ? 'bg-red-500 text-white'     : 'bg-red-100 text-red-700',
   }
-  const hintStr = (c: Candidate) => {
-    if (hint === 'interviewDate' && c.interviewDate) return fmtDate(c.interviewDate)
-    if (hint === 'startDate'     && c.startDate)     return fmtDate(c.startDate)
-    return null
-  }
-  return (
-    <div className="flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition relative">
-      <span className="text-sm text-slate-600">{label}</span>
-      <div className="relative"
-        onMouseEnter={() => total > 0 && setShow(true)}
-        onMouseLeave={() => setShow(false)}>
-        <span className={`inline-flex items-center justify-center w-9 h-9 rounded-xl font-bold text-base select-none
-          ${total > 0 ? bg[color] + ' cursor-pointer' : 'text-slate-300 cursor-default'}`}>
-          {total > 0 ? total : '—'}
-        </span>
+  const hintStr = (c: Candidate) =>
+    hint === 'interviewDate' && c.interviewDate ? fmtDate(c.interviewDate) : null
 
-        {show && total > 0 && (
-          <div className="absolute z-[200] bg-white border border-slate-200 rounded-xl shadow-xl py-2 text-right"
-            style={{ bottom: '110%', left: '50%', transform: 'translateX(-50%)', minWidth: 200, pointerEvents: 'none' }}>
-            {groups.map(g => (
-              <div key={g.pos.id}>
-                <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide bg-slate-50">
-                  {g.pos.companyName}{g.pos.positionTitle ? ` · ${g.pos.positionTitle}` : ''} ({g.cands.length})
-                </div>
-                {g.cands.map(c => (
-                  <div key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                    <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
-                      {c.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <span className="font-semibold text-slate-800">{c.name}</span>
-                      {hintStr(c) && <span className="text-slate-400 mr-1.5">{hintStr(c)}</span>}
-                    </div>
-                  </div>
-                ))}
+  return (
+    <div className="w-16 flex items-center justify-center relative"
+      onMouseEnter={() => total > 0 && setShow(true)}
+      onMouseLeave={() => setShow(false)}>
+      <span className={`inline-flex items-center justify-center w-9 h-9 rounded-xl font-bold text-sm select-none
+        ${total > 0 ? (bg[color] ?? 'bg-slate-100 text-slate-700') + ' cursor-pointer' : 'text-slate-300 cursor-default'}`}>
+        {total > 0 ? total : '—'}
+      </span>
+
+      {show && total > 0 && (
+        <div className="absolute z-[200] bg-white border border-slate-200 rounded-xl shadow-xl py-2 text-right"
+          style={{ bottom: '110%', left: '50%', transform: 'translateX(-50%)', minWidth: 210, pointerEvents: 'none' }}>
+          {groups.map(g => (
+            <div key={g.pos.id}>
+              <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase bg-slate-50">
+                {g.pos.companyName}{g.pos.positionTitle ? ` · ${g.pos.positionTitle}` : ''} ({g.cands.length})
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              {g.cands.map(c => (
+                <div key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                  <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
+                    {c.name.charAt(0)}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="font-semibold text-slate-800">{c.name}</span>
+                    {hintStr(c) && <span className="text-[10px] text-slate-400 mr-1.5">{hintStr(c)}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
