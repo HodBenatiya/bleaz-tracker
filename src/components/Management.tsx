@@ -785,19 +785,23 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
     return (c.interviewHistory ?? []).some(h => h.savedPositionId === posId && inWeek(h.date))
   }
 
+  const PIPELINE_STATUSES = ['relevant', 'called', 'screening', 'call_scheduled', 'future_relevant', 'sent_to_client', 'interview_scheduled']
+
   const posRows = active.map(pos => {
-    const posId     = pos.id
-    const newLeads  = candidates.filter(c => inWeek(c.createdAt) && linkedToPos(c, posId)).length
-    const sentNow   = candidates.filter(c => c.status === 'sent_to_client' && linkedToPos(c, posId)).length
+    const posId      = pos.id
+    const inPipeline = candidates.filter(c => PIPELINE_STATUSES.includes(c.status) && linkedToPos(c, posId)).length
+    const newLeads   = candidates.filter(c => inWeek(c.createdAt) && linkedToPos(c, posId)).length
+    const sentNow    = candidates.filter(c => c.status === 'sent_to_client' && linkedToPos(c, posId)).length
     const firstInter = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) === 1).length
     const secInter   = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) > 1).length
-    const placed    = candidates.filter(c => inWeek(c.startDate) && linkedToPos(c, posId)).length
-    const rejected  = candidates.filter(c => c.status === 'irrelevant' && inWeek(c.updatedAt) && linkedToPos(c, posId)).length
-    return { pos, newLeads, sentNow, firstInter, secInter, placed, rejected }
-  }).filter(r => r.newLeads + r.sentNow + r.firstInter + r.secInter + r.placed + r.rejected > 0)
+    const placed     = candidates.filter(c => inWeek(c.startDate) && linkedToPos(c, posId)).length
+    const rejected   = candidates.filter(c => c.status === 'irrelevant' && inWeek(c.updatedAt) && linkedToPos(c, posId)).length
+    return { pos, inPipeline, newLeads, sentNow, firstInter, secInter, placed, rejected }
+  })
 
   const totals = posRows.reduce(
     (acc, r) => ({
+      inPipeline: acc.inPipeline + r.inPipeline,
       newLeads:   acc.newLeads   + r.newLeads,
       sentNow:    acc.sentNow    + r.sentNow,
       firstInter: acc.firstInter + r.firstInter,
@@ -805,7 +809,7 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
       placed:     acc.placed     + r.placed,
       rejected:   acc.rejected   + r.rejected,
     }),
-    { newLeads: 0, sentNow: 0, firstInter: 0, secInter: 0, placed: 0, rejected: 0 }
+    { inPipeline: 0, newLeads: 0, sentNow: 0, firstInter: 0, secInter: 0, placed: 0, rejected: 0 }
   )
 
   return (
@@ -838,18 +842,19 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
         </div>
       </div>
 
-      {posRows.length === 0 ? (
-        <div className="py-12 text-center text-slate-400 text-sm">אין פעילות מתועדת בשבוע זה</div>
+      {active.length === 0 ? (
+        <div className="py-12 text-center text-slate-400 text-sm">אין משרות פעילות</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-xs text-slate-500">
                 <th className="text-right px-4 py-2.5 font-semibold">משרה</th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">לידים<br /><span className="font-normal opacity-60">חדשים</span></th>
+                <th className="text-center px-3 py-2.5 font-semibold leading-tight">בפייפליין<br /><span className="font-normal opacity-60">כעת</span></th>
+                <th className="text-center px-3 py-2.5 font-semibold leading-tight">לידים<br /><span className="font-normal opacity-60">השבוע</span></th>
                 <th className="text-center px-3 py-2.5 font-semibold leading-tight">לפני<br /><span className="font-normal opacity-60">ראיון</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">ראיון<br /><span className="font-normal opacity-60">ראשון</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">ראיון<br /><span className="font-normal opacity-60">שני+</span></th>
+                <th className="text-center px-3 py-2.5 font-semibold leading-tight">ראיון<br /><span className="font-normal opacity-60">א׳ שבוע</span></th>
+                <th className="text-center px-3 py-2.5 font-semibold leading-tight">ראיון<br /><span className="font-normal opacity-60">ב׳+ שבוע</span></th>
                 <th className="text-center px-3 py-2.5 font-semibold">גויסו</th>
                 <th className="text-center px-3 py-2.5 font-semibold">נפסלו</th>
               </tr>
@@ -861,22 +866,24 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
                     <div className="font-semibold text-slate-800">{r.pos.companyName}</div>
                     {r.pos.positionTitle && <div className="text-xs text-slate-400">{r.pos.positionTitle}</div>}
                   </td>
-                  <WCell v={r.newLeads}   color="blue" />
-                  <WCell v={r.sentNow}    color="orange" />
-                  <WCell v={r.firstInter} color="purple" />
-                  <WCell v={r.secInter}   color="indigo" />
-                  <WCell v={r.placed}     color="green" />
-                  <WCell v={r.rejected}   color="red" />
+                  <WCell v={r.inPipeline}  color="slate" />
+                  <WCell v={r.newLeads}    color="blue" />
+                  <WCell v={r.sentNow}     color="orange" />
+                  <WCell v={r.firstInter}  color="purple" />
+                  <WCell v={r.secInter}    color="indigo" />
+                  <WCell v={r.placed}      color="green" />
+                  <WCell v={r.rejected}    color="red" />
                 </tr>
               ))}
               <tr className="bg-slate-50">
                 <td className="px-4 py-2.5 text-sm font-bold text-slate-600">סה"כ</td>
-                <WCell v={totals.newLeads}   color="blue"   bold />
-                <WCell v={totals.sentNow}    color="orange" bold />
-                <WCell v={totals.firstInter} color="purple" bold />
-                <WCell v={totals.secInter}   color="indigo" bold />
-                <WCell v={totals.placed}     color="green"  bold />
-                <WCell v={totals.rejected}   color="red"    bold />
+                <WCell v={totals.inPipeline}  color="slate"  bold />
+                <WCell v={totals.newLeads}    color="blue"   bold />
+                <WCell v={totals.sentNow}     color="orange" bold />
+                <WCell v={totals.firstInter}  color="purple" bold />
+                <WCell v={totals.secInter}    color="indigo" bold />
+                <WCell v={totals.placed}      color="green"  bold />
+                <WCell v={totals.rejected}    color="red"    bold />
               </tr>
             </tbody>
           </table>
@@ -888,6 +895,7 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
 
 function WCell({ v, color, bold }: { v: number; color: string; bold?: boolean }) {
   const on: Record<string, string> = {
+    slate:  'bg-slate-200 text-slate-700',
     blue:   'bg-blue-100 text-blue-700',
     orange: 'bg-orange-100 text-orange-700',
     purple: 'bg-purple-100 text-purple-700',
