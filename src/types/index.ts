@@ -6,15 +6,36 @@ export interface SavedPosition {
   companyName: string
   positionTitle: string
   city: string
+  description?: string   // פירוט המשרה / הודעה מקדימה למועמדים
+  positionNumber?: string // מספר משרה במערכת הפנימית
+  positionUrl?: string    // לינק למשרה במערכת הפנימית
+  clientToken?: string    // טוקן גישה ללינק ציבורי ללקוח
   isActive: boolean
   createdAt: string
 
   // ── פאנל מצטבר (לא יומי) ──
-  // מתעדכן ידנית כשמשהו קורה, ללא קשר לתאריך ספציפי
-  funnelSentToClient:     number  // פרופילים שנשלחו ללקוח לאישור
-  funnelInterviews:       number  // ראיונות שנקיימו
-  funnelAccepted:         number  // מועמדים שהתחילו לעבוד
-  funnelConfirmed:        number  // עברו תקופת אחריות → הכנסה מאושרת
+  funnelSentToClient:     number
+  funnelInterviews:       number
+  funnelAccepted:         number
+  funnelConfirmed:        number
+}
+
+// ── הערה בהיסטוריית מועמד ──
+export interface CandidateNote {
+  id: string
+  text: string
+  createdAt: string
+}
+
+// ── ראיון שהתרחש בעבר (ארכיב) ──
+export interface InterviewRecord {
+  id:             string
+  date:           string    // YYYY-MM-DD
+  time?:          string    // HH:MM
+  companyName:    string
+  positionTitle?: string
+  savedPositionId?: string  // מזהה המשרה בזמן הראיון
+  createdAt:      string    // מתי הרשומה נוצרה
 }
 
 // ── נתוני קמפיין יומיים למשרה ספציפית ──
@@ -121,9 +142,12 @@ export interface Task {
   assignee: 'hod' | 'tzachi' | 'both'
   priority: TaskPriority
   dueDate: string
-  dueTime?: string   // שעת יעד אופציונלית, פורמט HH:MM
+  dueTime?: string         // שעת יעד אופציונלית, פורמט HH:MM
   done: boolean
+  reminderSent?: boolean   // האם נשלחה תזכורת WhatsApp 15 דק' לפני
+  source?: 'app' | 'whatsapp' // מקור יצירת המשימה
   createdAt: string
+  updatedAt?: string
 }
 
 // ── מועמדים (CRM) ──
@@ -179,14 +203,25 @@ export interface Candidate {
   status: CandidateStatus
   positionType: string      // סוג המשרה
   source: string            // שם הקמפיין / מקור
-  savedPositionId?: string  // שיוך למשרה ספציפית
+  savedPositionId?: string  // שיוך ראשי (compat)
+  savedPositionIds?: string[] // שיוך למשרות מרובות
   nonaStatus: NonaStatus    // סטטוס הקמת משתמש נונה
-  interviewDate?: string    // תאריך ראיון עבודה (YYYY-MM-DD)
+  interviewDate?: string         // תאריך ראיון עבודה (YYYY-MM-DD)
+  interviewTime?: string         // שעת הראיון (HH:MM)
+  interviewReminderSent?: boolean // האם נשלחה תזכורת WhatsApp
   startDate?: string        // תאריך התחלת עבודה (YYYY-MM-DD)
-  notes: string
+  cvUrl?: string            // לינק לקורות חיים (Supabase Storage)
+  cvFileName?: string       // שם הקובץ המקורי
+  notes: string             // הערה מהירה (legacy)
+  noteHistory?: CandidateNote[]     // היסטוריית הערות עם חותמת זמן
+  interviewHistory?: InterviewRecord[] // ראיונות קודמים שהמועמד עבר
+  estimatedSalary?: number  // שכר משוער (₪/חודש)
+  invoiceStatus?: 'none' | 'sent' | 'paid' // סטטוס גבייה
+  invoiceSentDate?: string  // תאריך שליחת חשבונית (YYYY-MM-DD)
+  paidDate?: string         // תאריך קבלת תשלום (YYYY-MM-DD)
   createdAt: string
   updatedAt: string
 }
 
-export type View = 'dashboard' | 'form' | 'history' | 'positions' | 'pipeline' | 'tasks' | 'candidates' | 'marketing'
+export type View = 'dashboard' | 'form' | 'history' | 'positions' | 'pipeline' | 'tasks' | 'candidates' | 'marketing' | 'data' | 'board' | 'management'
 export type DashboardTab = 'daily' | 'weekly' | 'monthly' | 'company'

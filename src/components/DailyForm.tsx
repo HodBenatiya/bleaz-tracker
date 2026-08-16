@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   ChevronRight, ChevronLeft, Save, CheckCircle2,
   Plus, Trash2, Users, StickyNote, Megaphone, Briefcase,
-  Settings, Building2,
+  Settings, Building2, Zap, Upload,
 } from 'lucide-react'
 import type { DailyReport, ActiveClient, ClientStatus, JobPosition, SavedPosition, PipelineCompany } from '../types'
 import { CLIENT_STATUS_LABELS, PIPELINE_STAGE_LABELS, PIPELINE_STAGE_COLORS } from '../types'
@@ -10,6 +10,9 @@ import {
   todayISO, toISODate, formatDateHe, calcCostPerLead, formatCurrency,
   generateId, newEmptyReport, reportForDate,
 } from '../utils/helpers'
+import MetaSync from './MetaSync'
+import MetaCsvImport from './MetaCsvImport'
+import { loadMetaCredentials } from '../utils/metaApi'
 
 interface Props {
   reports:         DailyReport[]
@@ -58,8 +61,11 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
     return { ...base, jobs: buildJobsForDate(savedPositions, base.jobs) }
   }
 
-  const [form,  setForm]  = useState<DailyReport>(initForm)
-  const [saved, setSaved] = useState(false)
+  const [form,           setForm]           = useState<DailyReport>(initForm)
+  const [saved,          setSaved]          = useState(false)
+  const [showMetaSync,   setShowMetaSync]   = useState(false)
+  const [showMetaCsv,    setShowMetaCsv]    = useState(false)
+  const metaConnected = !!loadMetaCredentials()
 
   // Re-init when editingReport changes
   useEffect(() => {
@@ -160,9 +166,28 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
             </span>
             הוד — שיווק וגיוס מועמדים
           </h2>
-          <button onClick={onGoToPositions} className="btn-secondary !px-3 !py-1.5 text-xs">
-            <Settings size={13} /> ניהול משרות
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowMetaCsv(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition"
+            >
+              <Upload size={13} /> ייבא CSV
+            </button>
+            <button
+              onClick={() => setShowMetaSync(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                metaConnected
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Zap size={13} />
+              {metaConnected ? 'טען מ-Meta' : 'חבר Meta'}
+            </button>
+            <button onClick={onGoToPositions} className="btn-secondary !px-3 !py-1.5 text-xs">
+              <Settings size={13} /> ניהול משרות
+            </button>
+          </div>
         </div>
 
         {/* Saved positions */}
@@ -391,6 +416,25 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
             : <><Save size={20} /> שמור דיווח יומי</>}
         </button>
       </div>
+
+      {showMetaSync && (
+        <MetaSync
+          date={form.date}
+          savedPositions={savedPositions}
+          currentJobs={form.jobs}
+          onApply={jobs => set('jobs', jobs)}
+          onClose={() => setShowMetaSync(false)}
+        />
+      )}
+
+      {showMetaCsv && (
+        <MetaCsvImport
+          savedPositions={savedPositions}
+          currentJobs={form.jobs}
+          onApply={jobs => set('jobs', jobs)}
+          onClose={() => setShowMetaCsv(false)}
+        />
+      )}
     </div>
   )
 }

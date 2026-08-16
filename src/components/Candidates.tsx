@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react'
-import { Plus, Phone, X, ChevronLeft, ChevronRight, Trash2, Edit2, Search, Calendar, MapPin, Briefcase, User, Download, Upload } from 'lucide-react'
+import { useState, useRef, useMemo, useEffect } from 'react'
+import { Plus, Phone, X, Trash2, Edit2, Search, Calendar, MapPin, Briefcase, User, Download, Upload, Send, FileText, ExternalLink, Loader2, ChevronDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
+import { supabase } from '../utils/supabase'
+import type { Candidate, CandidateStatus, CandidateNote, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
@@ -17,23 +18,18 @@ interface Props {
   onChange:   (candidates: Candidate[]) => void
 }
 
-const COLUMNS: { status: CandidateStatus; color: string; headerColor: string }[] = [
-  { status: 'new',                 color: 'bg-blue-50    border-blue-200',   headerColor: 'bg-blue-600'    },
-  { status: 'screening',           color: 'bg-yellow-50  border-yellow-200', headerColor: 'bg-yellow-500'  },
-  { status: 'call_scheduled',      color: 'bg-orange-50  border-orange-200', headerColor: 'bg-orange-500'  },
-  { status: 'called',              color: 'bg-purple-50  border-purple-200', headerColor: 'bg-purple-600'  },
-  { status: 'relevant',            color: 'bg-green-50   border-green-200',  headerColor: 'bg-green-600'   },
-  { status: 'future_relevant',     color: 'bg-lime-50    border-lime-200',   headerColor: 'bg-lime-600'    },
-  { status: 'sent_to_client',      color: 'bg-teal-50    border-teal-200',   headerColor: 'bg-teal-600'    },
-  { status: 'interview_scheduled', color: 'bg-indigo-50  border-indigo-200', headerColor: 'bg-indigo-600'  },
-  { status: 'started_working',     color: 'bg-emerald-50 border-emerald-200',headerColor: 'bg-emerald-500' },
-  { status: 'placement_complete',  color: 'bg-emerald-50 border-emerald-300',headerColor: 'bg-emerald-700' },
-  { status: 'irrelevant',          color: 'bg-red-50     border-red-200',    headerColor: 'bg-red-500'     },
+const STATUS_ORDER: CandidateStatus[] = [
+  'new', 'screening', 'call_scheduled', 'called', 'relevant', 'future_relevant',
+  'sent_to_client', 'interview_scheduled', 'started_working', 'placement_complete', 'irrelevant',
 ]
 
-const STATUS_ORDER = COLUMNS.map(c => c.status)
-
 const SOURCES = ['Meta', 'אורגני', 'שיתוף / המלצה']
+
+const STATUS_FILTER_OPTIONS: CandidateStatus[] = [
+  'screening', 'call_scheduled', 'relevant', 'future_relevant',
+  'sent_to_client', 'interview_scheduled', 'started_working',
+  'placement_complete', 'irrelevant',
+]
 
 // ── Geographic proximity ───────────────────────────────────────────
 const CITY_COORDS: Record<string, [number, number]> = {
@@ -91,16 +87,20 @@ function daysSince(iso: string): number {
 
 function newCandidate(): Candidate {
   return {
-    id:           crypto.randomUUID(),
-    name:         '',
-    phone:        '',
-    status:       'new',
-    positionType: '',
-    source:       '',
-    nonaStatus:   '',
-    notes:        '',
-    createdAt:    new Date().toISOString(),
-    updatedAt:    new Date().toISOString(),
+    id:              crypto.randomUUID(),
+    name:            '',
+    phone:           '',
+    status:          'new',
+    positionType:    '',
+    source:          '',
+    nonaStatus:      '',
+    cvUrl:           '',
+    cvFileName:      '',
+    notes:           '',
+    savedPositionIds: [],
+    noteHistory:     [],
+    createdAt:       new Date().toISOString(),
+    updatedAt:       new Date().toISOString(),
   }
 }
 
@@ -110,23 +110,55 @@ function formatDateHe(iso: string): string {
 }
 
 export default function Candidates({ candidates, positions, onChange }: Props) {
-  const [showForm,     setShowForm]     = useState(false)
-  const [editing,      setEditing]      = useState<Candidate | null>(null)
-  const [viewing,      setViewing]      = useState<Candidate | null>(null)
-  const [filterStatus, setFilterStatus] = useState<CandidateStatus | ''>('')
-  const [search,       setSearch]       = useState('')
-  const [viewMode,     setViewMode]     = useState<'kanban' | 'list' | 'nona'>('kanban')
-  const [form,         setForm]         = useState<Candidate>(newCandidate())
-  const [showImport,   setShowImport]   = useState(false)
-  const [importRows,   setImportRows]   = useState<Record<string, string>[]>([])
+  const [showForm,        setShowForm]       = useState(false)
+  const [editing,         setEditing]        = useState<Candidate | null>(null)
+  const [viewing,         setViewing]        = useState<Candidate | null>(null)
+  const [openStatusMenu,  setOpenStatusMenu] = useState<string | null>(null)
+  const [filterPosition,  setFilterPosition] = useState('')
+  const [search,         setSearch]         = useState('')
+  const [viewMode,       setViewMode]       = useState<'list' | 'nona'>('list')
+  const [form,           setForm]           = useState<Candidate>(newCandidate())
+  const [newNote,             setNewNote]             = useState('')
+  const [showImport,          setShowImport]          = useState(false)
+  const [cvUploading,         setCvUploading]         = useState(false)
+  const [filterPositionTypes, setFilterPositionTypes] = useState<string[]>([])
+  const [showPosTypeDropdown, setShowPosTypeDropdown] = useState(false)
+  const [filterStatuses,      setFilterStatuses]      = useState<CandidateStatus[]>([])
+  const [showStatusFilter,    setShowStatusFilter]    = useState(false)
+  const chatEndRef         = useRef<HTMLDivElement>(null)
+  const posTypeDropdownRef = useRef<HTMLDivElement>(null)
+  const statusFilterRef    = useRef<HTMLDivElement>(null)
+  const [importRows,     setImportRows]     = useState<Record<string, string>[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const cvFileRef    = useRef<HTMLInputElement>(null)
+
+  const allPositionTypes = useMemo(() => {
+    const types = new Set(candidates.map(c => c.positionType).filter(Boolean))
+    return [...types].sort()
+  }, [candidates])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (posTypeDropdownRef.current && !posTypeDropdownRef.current.contains(e.target as Node))
+        setShowPosTypeDropdown(false)
+      if (statusFilterRef.current && !statusFilterRef.current.contains(e.target as Node))
+        setShowStatusFilter(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const searchedCity = Object.keys(CITY_COORDS).find(
     city => city === search.trim() || city.includes(search.trim()) && search.trim().length >= 2
   ) ?? null
 
+  const getPositionIds = (c: Candidate) =>
+    c.savedPositionIds?.length ? c.savedPositionIds : c.savedPositionId ? [c.savedPositionId] : []
+
   const filtered = candidates.filter(c => {
-    if (filterStatus && c.status !== filterStatus) return false
+    if (filterStatuses.length > 0 && !filterStatuses.includes(c.status)) return false
+    if (filterPosition && !getPositionIds(c).includes(filterPosition)) return false
+    if (filterPositionTypes.length > 0 && !filterPositionTypes.includes(c.positionType)) return false
     if (search) {
       const q = search.toLowerCase()
       return (
@@ -177,6 +209,27 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
         candidate = { ...candidate, startDate: todayStr }
     }
 
+    // ארכיב ראיון קודם — כשחברה משתנה או סטטוס עוזב "נקבע ראיון"
+    if (prev?.status === 'interview_scheduled' && prev.interviewDate) {
+      const prevIds = [...(prev.savedPositionIds ?? (prev.savedPositionId ? [prev.savedPositionId] : []))].sort()
+      const newIds  = [...(candidate.savedPositionIds ?? (candidate.savedPositionId ? [candidate.savedPositionId] : []))].sort()
+      const companyChanged = JSON.stringify(prevIds) !== JSON.stringify(newIds)
+      const statusLeft     = candidate.status !== 'interview_scheduled'
+      if (companyChanged || statusLeft) {
+        const prevPos = prevIds.map(id => positions.find(p => p.id === id)).find(Boolean)
+        const record: import('../types').InterviewRecord = {
+          id:             crypto.randomUUID(),
+          date:           prev.interviewDate,
+          time:           prev.interviewTime,
+          companyName:    prevPos?.companyName ?? prev.positionType ?? 'לא ידוע',
+          positionTitle:  prevPos?.positionTitle,
+          savedPositionId: prevIds[0],
+          createdAt:      new Date().toISOString(),
+        }
+        candidate = { ...candidate, interviewHistory: [...(prev.interviewHistory ?? []), record] }
+      }
+    }
+
     const updated = { ...candidate, updatedAt: new Date().toISOString() }
     const exists  = candidates.find(x => x.id === updated.id)
     const next    = exists
@@ -190,14 +243,26 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
     onChange(candidates.filter(c => c.id !== id))
   }
 
-  const moveStatus = (c: Candidate, dir: 1 | -1) => {
-    const idx  = STATUS_ORDER.indexOf(c.status)
-    const next = STATUS_ORDER[idx + dir]
-    if (next) save({ ...c, status: next })
-  }
-
   const openNew = () => { setForm(newCandidate()); setEditing(null); setShowForm(true) }
   const openEdit = (c: Candidate) => { setForm({ ...c }); setEditing(c); setShowForm(true) }
+
+  const handleCvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCvUploading(true)
+    try {
+      const path = `${form.id}-${Date.now()}-${file.name}`
+      const { error } = await supabase.storage.from('cvs').upload(path, file, { upsert: true })
+      if (error) throw error
+      const { data } = supabase.storage.from('cvs').getPublicUrl(path)
+      setForm(f => ({ ...f, cvUrl: data.publicUrl, cvFileName: file.name }))
+    } catch {
+      alert('שגיאה בהעלאת הקובץ. ודא שיש bucket בשם "cvs" ב-Supabase Storage.')
+    } finally {
+      setCvUploading(false)
+      e.target.value = ''
+    }
+  }
 
   const submitForm = () => {
     if (!form.name.trim() || !form.phone.trim()) return
@@ -225,8 +290,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'מועמדים')
-    const label = filterStatus ? CANDIDATE_STATUS_LABELS[filterStatus] : 'כל המועמדים'
-    XLSX.writeFile(wb, `מועמדים_${label}_${new Date().toLocaleDateString('he-IL').replace(/\//g,'-')}.xlsx`)
+    XLSX.writeFile(wb, `מועמדים_כל_${new Date().toLocaleDateString('he-IL').replace(/\//g,'-')}.xlsx`)
   }
 
   // ── Import ──
@@ -287,40 +351,118 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
 
       {/* ── toolbar ── */}
       <div className="flex flex-wrap items-center gap-2">
-        {/* search */}
-        <div className="relative flex-1 min-w-48">
-          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        {/* search — wide & prominent */}
+        <div className="relative flex-1 min-w-72">
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="חיפוש לפי שם או טלפון..."
-            className="input w-full pr-9 text-sm"
+            placeholder="חיפוש לפי שם, טלפון או עיר..."
+            className="input w-full pr-10 py-2 text-sm shadow-sm"
           />
         </div>
 
-        {/* filter by status */}
+        {/* filter by position */}
         <select
-          value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value as CandidateStatus | '')}
+          value={filterPosition}
+          onChange={e => setFilterPosition(e.target.value)}
           className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white"
         >
-          <option value="">כל הסטטוסים</option>
-          {STATUS_ORDER.map(s => {
-            const count = candidates.filter(c => c.status === s).length
-            return count > 0
-              ? <option key={s} value={s}>{CANDIDATE_STATUS_LABELS[s]} ({count})</option>
-              : null
-          })}
+          <option value="">כל המשרות</option>
+          {positions.filter(p => p.isActive).map(p => (
+            <option key={p.id} value={p.id}>
+              {p.companyName}{p.positionTitle ? ` · ${p.positionTitle}` : ''}
+            </option>
+          ))}
         </select>
+
+        {/* status filter */}
+        <div className="relative" ref={statusFilterRef}>
+          <button
+            onClick={() => setShowStatusFilter(f => !f)}
+            className={`text-sm border rounded-lg px-3 py-1.5 bg-white flex items-center gap-1.5 transition ${filterStatuses.length > 0 ? 'border-brand-400 text-brand-700 font-medium' : 'border-slate-200 text-slate-600'}`}
+          >
+            {filterStatuses.length === 0 ? 'כל הסטטוסים' : `${filterStatuses.length} סטטוסים`}
+            <ChevronDown size={13} />
+          </button>
+          {showStatusFilter && (
+            <div className="absolute top-full mt-1 right-0 z-30 bg-white border border-slate-200 rounded-xl shadow-lg py-1 min-w-[210px] max-h-72 overflow-y-auto" dir="rtl">
+              {filterStatuses.length > 0 && (
+                <button
+                  onClick={() => setFilterStatuses([])}
+                  className="w-full text-right text-xs text-red-500 hover:text-red-700 px-3 py-1.5 hover:bg-red-50 border-b border-slate-100"
+                >
+                  נקה הכל ×
+                </button>
+              )}
+              {STATUS_FILTER_OPTIONS.map(s => (
+                <label key={s} className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm text-slate-700 select-none">
+                  <input
+                    type="checkbox"
+                    checked={filterStatuses.includes(s)}
+                    onChange={() =>
+                      setFilterStatuses(prev =>
+                        prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]
+                      )
+                    }
+                    className="accent-brand-600"
+                  />
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${CANDIDATE_STATUS_COLORS[s].split(' ')[0]}`} />
+                  {CANDIDATE_STATUS_LABELS[s]}
+                  <span className="mr-auto text-xs text-slate-400">
+                    ({candidates.filter(c => c.status === s).length})
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* multi-select positionType filter */}
+        {allPositionTypes.length > 0 && (
+          <div className="relative" ref={posTypeDropdownRef}>
+            <button
+              onClick={() => setShowPosTypeDropdown(f => !f)}
+              className={`text-sm border rounded-lg px-3 py-1.5 bg-white flex items-center gap-1.5 transition ${filterPositionTypes.length > 0 ? 'border-brand-400 text-brand-700 font-medium' : 'border-slate-200 text-slate-600'}`}
+            >
+              {filterPositionTypes.length === 0 ? 'כל התפקידים' : `${filterPositionTypes.length} תפקידים`}
+              <ChevronDown size={13} />
+            </button>
+            {showPosTypeDropdown && (
+              <div className="absolute top-full mt-1 right-0 z-30 bg-white border border-slate-200 rounded-xl shadow-lg py-1 min-w-[200px] max-h-60 overflow-y-auto">
+                {filterPositionTypes.length > 0 && (
+                  <button
+                    onClick={() => setFilterPositionTypes([])}
+                    className="w-full text-right text-xs text-red-500 hover:text-red-700 px-3 py-1.5 hover:bg-red-50 border-b border-slate-100"
+                  >
+                    נקה הכל ×
+                  </button>
+                )}
+                {allPositionTypes.map(type => (
+                  <label key={type} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm text-slate-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={filterPositionTypes.includes(type)}
+                      onChange={() =>
+                        setFilterPositionTypes(prev =>
+                          prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                        )
+                      }
+                      className="accent-brand-600"
+                    />
+                    {type}
+                    <span className="mr-auto text-xs text-slate-400">
+                      ({candidates.filter(c => c.positionType === type).length})
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* view toggle */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-          <button
-            onClick={() => setViewMode('kanban')}
-            className={`px-3 py-1.5 text-sm font-medium ${viewMode === 'kanban' ? 'bg-brand-600 text-white' : 'bg-white text-slate-600'}`}
-          >
-            קנבן
-          </button>
           <button
             onClick={() => setViewMode('list')}
             className={`px-3 py-1.5 text-sm font-medium ${viewMode === 'list' ? 'bg-brand-600 text-white' : 'bg-white text-slate-600'}`}
@@ -337,7 +479,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
 
         <button
           onClick={exportToExcel}
-          title={filterStatus ? `ייצוא ${CANDIDATE_STATUS_LABELS[filterStatus]}` : 'ייצוא כל המועמדים'}
+          title="ייצוא לאקסל"
           className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
         >
           <Download size={15} />
@@ -358,145 +500,139 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
         </button>
       </div>
 
-      {/* ── kanban view ── */}
-      {viewMode === 'kanban' && !filterStatus && (
-        <div className="overflow-x-auto pb-4">
-          <div className="flex gap-3 min-w-max">
-            {COLUMNS.map(col => {
-              const colCandidates = filtered.filter(c => c.status === col.status)
-              return (
-                <div key={col.status} className="w-56 flex-shrink-0">
-                  <div className={`${col.headerColor} text-white rounded-t-lg px-3 py-2 flex items-center justify-between`}>
-                    <span className="text-sm font-bold">{CANDIDATE_STATUS_LABELS[col.status]}</span>
-                    <span className="bg-white bg-opacity-30 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-                      {colCandidates.length}
-                    </span>
-                  </div>
-                  <div className={`${col.color} border border-t-0 rounded-b-lg min-h-32 p-2 space-y-2`}>
-                    {colCandidates.map(c => (
-                      <CandidateCard
-                        key={c.id}
-                        candidate={c}
-                        statusOrder={STATUS_ORDER}
-                        onMove={moveStatus}
-                        onEdit={openEdit}
-                        onDelete={remove}
-                        onView={setViewing}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ── filtered grid (כשיש סינון סטטוס פעיל) ── */}
-      {viewMode === 'kanban' && filterStatus && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${CANDIDATE_STATUS_COLORS[filterStatus]}`}>
-              {CANDIDATE_STATUS_LABELS[filterStatus]}
-            </span>
-            <span className="text-sm text-slate-500">{filtered.length} מועמדים</span>
-          </div>
-          {filtered.length === 0 ? (
-            <div className="text-center py-16 text-slate-400">אין מועמדים בסטטוס זה</div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-              {filtered.map(c => (
-                <CandidateCard
-                  key={c.id}
-                  candidate={c}
-                  statusOrder={STATUS_ORDER}
-                  onMove={moveStatus}
-                  onEdit={openEdit}
-                  onDelete={remove}
-                  onView={setViewing}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ── list view ── */}
       {viewMode === 'list' && (
-        <div className="card overflow-hidden p-0">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* overlay for closing status menu */}
+          {openStatusMenu && (
+            <div className="fixed inset-0 z-30" onClick={() => setOpenStatusMenu(null)} />
+          )}
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
+            <thead className="bg-[#F8F9FA] border-b border-slate-200">
               <tr>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">שם</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">טלפון</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">גיל</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">עיר</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">משרה</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">מקור</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">סטטוס</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">ראיון</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">התחלה</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">נכנס</th>
-                <th className="text-right px-4 py-3 font-semibold text-slate-600">ימים בשלב</th>
-                <th className="px-4 py-3"></th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">שם</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">טלפון</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">גיל / עיר</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">סטטוס</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">חברות / משרה</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">מקור</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">הערות</th>
+                <th className="text-right px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">נכנס</th>
+                <th className="px-4 py-3 w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map(c => {
                 const daysIn    = daysSince(c.createdAt)
                 const daysStage = daysSince(c.updatedAt)
+                const noteText  = c.noteHistory?.length
+                  ? c.noteHistory[c.noteHistory.length - 1].text
+                  : (c.notes || '')
                 return (
-                  <tr key={c.id} className="hover:bg-slate-50">
+                  <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+
+                    {/* Name — click opens edit drawer */}
                     <td className="px-4 py-3">
-                      <button onClick={() => setViewing(c)} className="font-medium text-brand-700 hover:underline text-right">
+                      <button
+                        onClick={() => openEdit(c)}
+                        className="font-semibold text-slate-800 hover:text-brand-700 hover:underline text-right leading-tight"
+                      >
                         {c.name}
                       </button>
                     </td>
+
                     <td className="px-4 py-3">
-                      <a href={`tel:${c.phone}`} className="text-brand-600 font-mono hover:underline flex items-center gap-1">
+                      <a href={`tel:${c.phone}`} className="text-brand-600 font-mono hover:underline flex items-center gap-1 text-xs">
                         <Phone size={12} />{c.phone}
                       </a>
                     </td>
-                    <td className="px-4 py-3 text-slate-500 text-center">{c.age ?? '—'}</td>
-                    <td className="px-4 py-3 text-slate-500">{c.city || '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">{c.positionType}</td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">{c.source}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className={`text-xs font-medium px-2 py-1 rounded-full w-fit ${CANDIDATE_STATUS_COLORS[c.status]}`}>
-                          {CANDIDATE_STATUS_LABELS[c.status]}
-                        </span>
-                        {c.status === 'interview_scheduled' && c.interviewDate && (
-                          <span className="text-xs text-indigo-500">📅 {formatDateHe(c.interviewDate)}</span>
-                        )}
-                        {c.status === 'started_working' && c.startDate && (
-                          <span className="text-xs text-emerald-500">✅ {formatDateHe(c.startDate)}</span>
-                        )}
-                      </div>
+
+                    <td className="px-4 py-3 text-slate-500 text-xs">
+                      {c.age ? `גיל ${c.age}` : ''}{c.age && c.city ? ' · ' : ''}{c.city || ''}
                     </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
-                      {c.interviewDate ? formatDateHe(c.interviewDate) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
-                      {c.startDate ? formatDateHe(c.startDate) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
-                      {daysIn === 0 ? 'היום' : `לפני ${daysIn} ימים`}
-                    </td>
-                    <td className="px-4 py-3 text-xs">
-                      <span className={`font-medium ${daysStage > 7 ? 'text-orange-600' : 'text-slate-500'}`}>
-                        {daysStage === 0 ? 'היום' : `${daysStage} ימים`}
-                      </span>
-                    </td>
+
+                    {/* Status — badge click opens WhatsApp timeline; chevron click opens inline status picker */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => openEdit(c)} className="p-1 text-slate-400 hover:text-brand-600">
-                          <Edit2 size={14} />
-                        </button>
-                        <button onClick={() => remove(c.id)} className="p-1 text-slate-400 hover:text-red-500">
-                          <Trash2 size={14} />
-                        </button>
+                        <div>
+                          <button
+                            onClick={() => setViewing(c)}
+                            className={`text-xs font-semibold px-2 py-1 rounded-full hover:opacity-80 transition ${CANDIDATE_STATUS_COLORS[c.status]}`}
+                          >
+                            {CANDIDATE_STATUS_LABELS[c.status]}
+                          </button>
+                          {c.status === 'interview_scheduled' && c.interviewDate && (
+                            <div className="text-xs text-indigo-500 mt-0.5">
+                              📅 {formatDateHe(c.interviewDate)}{c.interviewTime ? ` · ${c.interviewTime}` : ''}
+                            </div>
+                          )}
+                          {c.status === 'started_working' && c.startDate && (
+                            <div className="text-xs text-emerald-500 mt-0.5">✅ {formatDateHe(c.startDate)}</div>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <button
+                            onClick={e => { e.stopPropagation(); setOpenStatusMenu(openStatusMenu === c.id ? null : c.id) }}
+                            className="p-1 text-slate-300 hover:text-slate-500 rounded hover:bg-slate-100 transition"
+                          >
+                            <ChevronDown size={11} />
+                          </button>
+                          {openStatusMenu === c.id && (
+                            <div className="absolute right-0 top-8 z-40 bg-white border border-slate-200 rounded-xl shadow-xl py-1 min-w-[190px]">
+                              {STATUS_ORDER.map(s => (
+                                <button
+                                  key={s}
+                                  onClick={() => { save({ ...c, status: s }); setOpenStatusMenu(null) }}
+                                  className={`w-full text-right px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center gap-2.5 transition ${c.status === s ? 'font-semibold text-brand-700 bg-brand-50' : 'text-slate-700'}`}
+                                >
+                                  <span className={`w-2 h-2 rounded-full shrink-0 ${CANDIDATE_STATUS_COLORS[s].split(' ')[0]}`} />
+                                  {CANDIDATE_STATUS_LABELS[s]}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
+                    </td>
+
+                    <td className="px-4 py-3 text-xs">
+                      <div className="flex flex-col gap-0.5">
+                        {getPositionIds(c).map(pid => {
+                          const pos = positions.find(p => p.id === pid)
+                          return pos ? (
+                            <span key={pid} className="text-brand-700 font-medium bg-brand-50 px-1.5 py-0.5 rounded w-fit">
+                              {pos.companyName}
+                            </span>
+                          ) : null
+                        })}
+                        {c.positionType && <span className="text-slate-400">{c.positionType}</span>}
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3 text-slate-500 text-xs">{c.source}</td>
+
+                    {/* Notes with hover tooltip */}
+                    <td className="px-4 py-3 text-slate-500 text-xs max-w-[200px] relative group">
+                      <span className="line-clamp-2 cursor-default">{noteText || '—'}</span>
+                      {noteText.length > 40 && (
+                        <div className="pointer-events-none absolute z-50 hidden group-hover:block bottom-full right-0 mb-2 w-80 bg-slate-900 text-white text-xs rounded-xl p-3.5 shadow-2xl leading-relaxed whitespace-pre-wrap">
+                          {noteText}
+                          <div className="absolute top-full right-4 border-[6px] border-transparent border-t-slate-900" />
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                      {daysIn === 0 ? 'היום' : `לפני ${daysIn}י׳`}
+                      <span className={`block ${daysStage > 7 ? 'text-orange-500 font-semibold' : 'text-slate-300'}`}>
+                        {daysStage === 0 ? 'עדכון היום' : `${daysStage}י׳ בשלב`}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <button onClick={() => remove(c.id)} className="p-1 text-slate-300 hover:text-red-500 transition">
+                        <Trash2 size={14} />
+                      </button>
                     </td>
                   </tr>
                 )
@@ -504,7 +640,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
             </tbody>
           </table>
           {filtered.length === 0 && (
-            <div className="text-center py-12 text-slate-400">אין מועמדים להצגה</div>
+            <div className="text-center py-14 text-slate-400">אין מועמדים להצגה</div>
           )}
         </div>
       )}
@@ -624,171 +760,277 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
         </div>
       )}
 
-      {/* ── intake modal ── */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" dir="rtl">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200">
-              <h2 className="text-lg font-bold text-slate-800">
-                {editing ? 'עריכת מועמד' : 'מועמד חדש'}
-              </h2>
-              <button onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+      {/* ── edit modal (centered, darkens entire screen including sidebar) ── */}
+      {showForm && (() => {
+        const singleMode      = form.status === 'started_working' || form.status === 'placement_complete'
+        const posIds          = form.savedPositionIds ?? (form.savedPositionId ? [form.savedPositionId] : [])
+        const activePositions = positions.filter(p => p.isActive)
+        const lbl             = (txt: string) => (
+          <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">{txt}</label>
+        )
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/65 flex items-center justify-center p-6"
+            onClick={() => setShowForm(false)}
+          >
+            <div
+              className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh]"
+              dir="rtl"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* ── Header ── */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 shrink-0">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">שם מלא *</label>
-                  <input
-                    autoFocus
-                    value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    className="input w-full"
-                    placeholder="ישראל ישראלי"
+                  <h2 className="text-lg font-bold text-slate-800">{editing ? 'עריכת מועמד' : 'מועמד חדש'}</h2>
+                  {editing && <p className="text-xs text-slate-400 font-mono mt-0.5">{form.phone}</p>}
+                </div>
+                <button onClick={() => setShowForm(false)} className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* ── Body ── */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+
+                {/* Row 1: שם (2 cols) + טלפון + גיל + עיר */}
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-2">
+                    {lbl('שם מלא *')}
+                    <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                      className="input w-full text-sm" placeholder="ישראל ישראלי" />
+                  </div>
+                  <div>
+                    {lbl('טלפון *')}
+                    <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                      className="input w-full font-mono text-sm" placeholder="050-0000000" type="tel" />
+                  </div>
+                  <div>
+                    {lbl('גיל')}
+                    <input value={form.age ?? ''} onChange={e => setForm(f => ({ ...f, age: e.target.value ? Number(e.target.value) : undefined }))}
+                      className="input w-full text-sm" placeholder="35" type="number" min="18" max="70" />
+                  </div>
+                </div>
+
+                {/* Row 2: עיר + מקור + סטטוס + סוג משרה */}
+                <div className="grid grid-cols-4 gap-3">
+                  <div>
+                    {lbl('עיר מגורים')}
+                    <input value={form.city ?? ''} onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                      className="input w-full text-sm" placeholder="תל אביב..." />
+                  </div>
+                  <div>
+                    {lbl('מקור הגעה')}
+                    <select value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} className="input w-full text-sm">
+                      <option value="">בחר...</option>
+                      {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    {lbl('סטטוס')}
+                    <select
+                      value={form.status}
+                      onChange={e => {
+                        const next = e.target.value as CandidateStatus
+                        if (next === 'started_working' || next === 'placement_complete') {
+                          const ids = form.savedPositionIds ?? (form.savedPositionId ? [form.savedPositionId] : [])
+                          const single = ids.slice(0, 1)
+                          setForm(f => ({ ...f, status: next, savedPositionIds: single, savedPositionId: single[0] }))
+                        } else {
+                          setForm(f => ({ ...f, status: next }))
+                        }
+                      }}
+                      className="input w-full text-sm"
+                    >
+                      {STATUS_ORDER.map(s => <option key={s} value={s}>{CANDIDATE_STATUS_LABELS[s]}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    {lbl('נונה')}
+                    <select value={form.nonaStatus ?? ''} onChange={e => setForm(f => ({ ...f, nonaStatus: e.target.value as NonaStatus }))} className="input w-full text-sm">
+                      {NONA_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    {lbl('שכר משוער (₪/חודש)')}
+                    <input
+                      type="number" min="0"
+                      value={form.estimatedSalary ?? ''}
+                      onChange={e => setForm(f => ({ ...f, estimatedSalary: e.target.value ? Number(e.target.value) : undefined }))}
+                      className="input w-full text-sm" placeholder="6,000..."
+                    />
+                  </div>
+                </div>
+
+                {/* הערות — full width */}
+                <div>
+                  {lbl('הערות')}
+                  <textarea
+                    value={form.notes}
+                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                    className="input w-full resize-none text-sm"
+                    rows={3}
+                    placeholder="ניסיון, זמינות, הערות כלליות..."
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">טלפון *</label>
-                  <input
-                    value={form.phone}
-                    onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                    className="input w-full font-mono"
-                    placeholder="050-0000000"
-                    type="tel"
-                  />
+
+                {/* שיוך לחברות / משרות — enlarged, most prominent section */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                      {singleMode ? '📍 מקום עבודה — 1 בלבד' : '🔗 שיוך לחברות / משרות'}
+                    </span>
+                    {!singleMode && posIds.length > 0 && (
+                      <span className="text-xs font-semibold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full">{posIds.length} נבחרו</span>
+                    )}
+                  </div>
+
+                  {/* Checkbox / radio list — enlarged */}
+                  <div className="min-h-[110px] max-h-48 overflow-y-auto p-2 space-y-0.5 bg-white">
+                    {activePositions.length === 0 && (
+                      <p className="text-xs text-slate-400 text-center py-4">אין משרות פעילות</p>
+                    )}
+                    {activePositions.map(p => {
+                      const checked = posIds.includes(p.id)
+                      return (
+                        <label key={p.id} className={`flex items-center gap-3 cursor-pointer rounded-lg px-3 py-2 transition border ${checked ? 'bg-brand-50 border-brand-200' : 'border-transparent hover:bg-slate-50'}`}>
+                          <input
+                            type={singleMode ? 'radio' : 'checkbox'}
+                            name="position-select"
+                            checked={checked}
+                            onChange={() => {
+                              if (singleMode) {
+                                setForm(f => ({ ...f, savedPositionIds: [p.id], savedPositionId: p.id }))
+                              } else {
+                                const next = checked ? posIds.filter(id => id !== p.id) : [...posIds, p.id]
+                                setForm(f => ({ ...f, savedPositionIds: next, savedPositionId: next[0] }))
+                              }
+                            }}
+                            className="accent-brand-600 w-4 h-4 shrink-0"
+                          />
+                          <div className="text-sm">
+                            <span className="font-medium text-slate-800">{p.companyName}</span>
+                            {p.positionTitle && <span className="text-slate-400 mr-1"> · {p.positionTitle}</span>}
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+
+                  {/* הוסף משרה ידנית */}
+                  <div className="border-t border-slate-200 px-4 py-3 bg-white">
+                    {lbl('הוסף משרה ידנית')}
+                    <input
+                      value={form.positionType}
+                      onChange={e => setForm(f => ({ ...f, positionType: e.target.value }))}
+                      className="input w-full text-sm"
+                      placeholder="הכנס שם תפקיד / חברה..."
+                      list="position-types"
+                    />
+                    <datalist id="position-types">
+                      {positions.map(p => <option key={p.id} value={p.positionTitle} />)}
+                    </datalist>
+                  </div>
+                </div>
+
+                {/* Dates */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    {lbl('תאריך ראיון')}
+                    <input type="date" value={form.interviewDate ?? ''} onChange={e => setForm(f => ({ ...f, interviewDate: e.target.value || undefined, interviewReminderSent: undefined }))} className="input w-full text-sm" />
+                  </div>
+                  <div>
+                    {lbl('שעת ראיון')}
+                    <input
+                      type="time"
+                      value={form.interviewTime ?? ''}
+                      onChange={e => setForm(f => ({ ...f, interviewTime: e.target.value || undefined, interviewReminderSent: undefined }))}
+                      className="input w-full text-sm"
+                      disabled={!form.interviewDate}
+                    />
+                  </div>
+                  <div>
+                    {lbl('תאריך התחלה')}
+                    <input type="date" value={form.startDate ?? ''} onChange={e => setForm(f => ({ ...f, startDate: e.target.value || undefined }))} className="input w-full text-sm" />
+                  </div>
+                </div>
+
+                {/* Interview history — read only */}
+                {(form.interviewHistory?.length ?? 0) > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">היסטוריית ראיונות</p>
+                    <div className="space-y-1.5">
+                      {form.interviewHistory!.map(h => (
+                        <div key={h.id} className="flex items-center gap-2 text-xs text-slate-600 bg-white border border-slate-100 rounded-lg px-3 py-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
+                          <span className="font-semibold">{h.companyName}</span>
+                          {h.positionTitle && <span className="text-slate-400">· {h.positionTitle}</span>}
+                          <span className="mr-auto text-slate-400 shrink-0">
+                            {new Date(h.date + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
+                            {h.time ? ` ${h.time}` : ''}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Invoice status — only for placed candidates */}
+                {(form.status === 'started_working' || form.status === 'placement_complete') && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                    <p className="text-xs font-bold text-emerald-700 mb-2 uppercase tracking-wide">גבייה — ₪5,000</p>
+                    <div className="flex gap-2">
+                      {(['none', 'sent', 'paid'] as const).map(s => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setForm(f => ({
+                            ...f,
+                            invoiceStatus: s,
+                            invoiceSentDate: s === 'sent' && !f.invoiceSentDate ? new Date().toISOString().split('T')[0] : f.invoiceSentDate,
+                            paidDate:        s === 'paid' && !f.paidDate        ? new Date().toISOString().split('T')[0] : f.paidDate,
+                          }))}
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition font-medium ${
+                            (form.invoiceStatus ?? 'none') === s
+                              ? s === 'none' ? 'bg-slate-200 border-slate-400 text-slate-700'
+                              : s === 'sent' ? 'bg-amber-200 border-amber-400 text-amber-800'
+                              :               'bg-green-200 border-green-400 text-green-800'
+                              : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'
+                          }`}
+                        >
+                          {s === 'none' ? 'לא נשלחה' : s === 'sent' ? 'נשלחה' : 'שולם ✓'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Footer ── */}
+              <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 shrink-0 space-y-3">
+                {form.cvUrl ? (
+                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                    <FileText size={14} className="text-brand-600 shrink-0" />
+                    <span className="text-sm text-slate-700 truncate flex-1">{form.cvFileName || 'קורות חיים'}</span>
+                    <button type="button" onClick={() => setForm(f => ({ ...f, cvUrl: '', cvFileName: '' }))} className="text-slate-400 hover:text-red-500 shrink-0"><X size={14} /></button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => cvFileRef.current?.click()} disabled={cvUploading}
+                    className="flex items-center gap-2 w-full px-3 py-2 border border-dashed border-slate-300 rounded-lg text-sm text-slate-500 hover:bg-white justify-center disabled:opacity-50 transition">
+                    {cvUploading ? <><Loader2 size={14} className="animate-spin" /> מעלה קובץ...</> : <><Upload size={14} /> קורות חיים (PDF, Word, כל קובץ)</>}
+                  </button>
+                )}
+                <input ref={cvFileRef} type="file" className="hidden" onChange={handleCvUpload} />
+                <div className="flex gap-3">
+                  <button onClick={submitForm} disabled={!form.name.trim() || !form.phone.trim()} className="btn-primary flex-1 disabled:opacity-40">
+                    {editing ? 'עדכן' : 'הוסף מועמד'}
+                  </button>
+                  <button onClick={() => setShowForm(false)} className="btn-secondary px-8">ביטול</button>
                 </div>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">גיל</label>
-                  <input
-                    value={form.age ?? ''}
-                    onChange={e => setForm(f => ({ ...f, age: e.target.value ? Number(e.target.value) : undefined }))}
-                    className="input w-full"
-                    placeholder="35"
-                    type="number"
-                    min="18" max="70"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">עיר מגורים</label>
-                  <input
-                    value={form.city ?? ''}
-                    onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
-                    className="input w-full"
-                    placeholder="תל אביב, חיפה..."
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">סוג משרה *</label>
-                <input
-                  value={form.positionType}
-                  onChange={e => setForm(f => ({ ...f, positionType: e.target.value }))}
-                  className="input w-full"
-                  placeholder="יועץ פנסיוני, מנהל מכירות..."
-                  list="position-types"
-                />
-                <datalist id="position-types">
-                  {positions.map(p => (
-                    <option key={p.id} value={p.positionTitle} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">שיוך למשרה ספציפית</label>
-                <select
-                  value={form.savedPositionId ?? ''}
-                  onChange={e => setForm(f => ({ ...f, savedPositionId: e.target.value || undefined }))}
-                  className="input w-full"
-                >
-                  <option value="">— ללא שיוך —</option>
-                  {positions.filter(p => p.isActive).map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.companyName}{p.positionTitle ? ` · ${p.positionTitle}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">מקור הגעה</label>
-                <select
-                  value={form.source}
-                  onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
-                  className="input w-full"
-                >
-                  <option value="">בחר מקור...</option>
-                  {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">סטטוס</label>
-                <select
-                  value={form.status}
-                  onChange={e => setForm(f => ({ ...f, status: e.target.value as CandidateStatus }))}
-                  className="input w-full"
-                >
-                  {STATUS_ORDER.map(s => (
-                    <option key={s} value={s}>{CANDIDATE_STATUS_LABELS[s]}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">תאריך ראיון</label>
-                  <input
-                    type="date"
-                    value={form.interviewDate ?? ''}
-                    onChange={e => setForm(f => ({ ...f, interviewDate: e.target.value || undefined }))}
-                    className="input w-full text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">תאריך התחלה</label>
-                  <input
-                    type="date"
-                    value={form.startDate ?? ''}
-                    onChange={e => setForm(f => ({ ...f, startDate: e.target.value || undefined }))}
-                    className="input w-full text-sm"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">הערות</label>
-                <textarea
-                  value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  className="input w-full resize-none"
-                  rows={3}
-                  placeholder="ניסיון, זמינות, הערות..."
-                />
-              </div>
-            </div>
-
-            <div className="px-5 pb-5 flex gap-3">
-              <button
-                onClick={submitForm}
-                disabled={!form.name.trim() || !form.phone.trim()}
-                className="btn-primary flex-1 disabled:opacity-40"
-              >
-                {editing ? 'עדכן' : 'הוסף מועמד'}
-              </button>
-              <button onClick={() => setShowForm(false)} className="btn-secondary flex-1">
-                ביטול
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ── import modal ── */}
       {showImport && (
@@ -861,147 +1103,187 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
       </button>
 
       {/* ── candidate detail modal ── */}
-      {viewing && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
-          onClick={() => setViewing(null)}
-        >
-          <div
-            className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
-            dir="rtl"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* header */}
-            <div className={`px-6 py-4 flex items-center justify-between ${
-              COLUMNS.find(c => c.status === viewing.status)?.headerColor ?? 'bg-slate-600'
-            }`}>
-              <div>
-                <h2 className="text-xl font-bold text-white">{viewing.name}</h2>
-                <span className="text-sm text-white/80">{CANDIDATE_STATUS_LABELS[viewing.status]}</span>
+      {viewing && (() => {
+        const linkedPositions = getPositionIds(viewing).map(id => positions.find(p => p.id === id)).filter(Boolean) as typeof positions
+
+        const addNote = () => {
+          if (!newNote.trim()) return
+          const note: CandidateNote = { id: crypto.randomUUID(), text: newNote.trim(), createdAt: new Date().toISOString() }
+          const updated = { ...viewing, noteHistory: [...(viewing.noteHistory ?? []), note] }
+          setViewing(updated)
+          save(updated)
+          setNewNote('')
+          setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+        }
+
+        // group notes by calendar day (oldest → newest)
+        const notes = viewing.noteHistory ?? []
+        type DayGroup = { day: string; notes: typeof notes }
+        const groups: DayGroup[] = []
+        for (const n of notes) {
+          const day = n.createdAt.split('T')[0]
+          const last = groups[groups.length - 1]
+          if (last && last.day === day) last.notes.push(n)
+          else groups.push({ day, notes: [n] })
+        }
+        const todayStr     = new Date().toISOString().split('T')[0]
+        const yesterdayStr = new Date(Date.now() - 86_400_000).toISOString().split('T')[0]
+        const dayLabel     = (d: string) =>
+          d === todayStr ? 'היום' : d === yesterdayStr ? 'אתמול' : formatDateHe(d)
+
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setViewing(null)}>
+            <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl flex flex-col max-h-[92vh]" dir="rtl" onClick={e => e.stopPropagation()}>
+
+              {/* ── header ── */}
+              <div className="px-5 py-4 flex items-center justify-between bg-slate-800 rounded-t-2xl shrink-0">
+                <div>
+                  <h2 className="text-xl font-bold text-white">{viewing.name}</h2>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full mt-1 inline-block ${CANDIDATE_STATUS_COLORS[viewing.status]}`}>
+                    {CANDIDATE_STATUS_LABELS[viewing.status]}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => { setViewing(null); openEdit(viewing) }} className="p-2 rounded-lg bg-white/15 text-white hover:bg-white/25">
+                    <Edit2 size={16} />
+                  </button>
+                  <button onClick={() => setViewing(null)} className="p-2 rounded-lg bg-white/15 text-white hover:bg-white/25">
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
+
+              {/* ── info strip (compact, no scroll) ── */}
+              <div className="px-5 py-3 border-b border-slate-100 shrink-0 space-y-2 bg-white">
+                <div className="flex items-center justify-between">
+                  <a href={`tel:${viewing.phone}`} className="flex items-center gap-1.5 text-brand-600 hover:underline font-mono font-semibold text-sm">
+                    <Phone size={15} />{viewing.phone}
+                  </a>
+                  <span className="text-xs text-slate-400">נכנס {formatDateHe(viewing.createdAt.split('T')[0])}</span>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                  {(viewing.age || viewing.city) && (
+                    <span className="flex items-center gap-1"><MapPin size={11} className="text-slate-400" />{viewing.age ? `גיל ${viewing.age}` : ''}{viewing.age && viewing.city ? ' · ' : ''}{viewing.city}</span>
+                  )}
+                  {viewing.source && <span className="flex items-center gap-1"><User size={11} className="text-slate-400" />{viewing.source}</span>}
+                  {viewing.positionType && <span className="flex items-center gap-1"><Briefcase size={11} className="text-slate-400" />{viewing.positionType}</span>}
+                  {viewing.cvUrl && (
+                    <a href={viewing.cvUrl} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-brand-600 hover:text-brand-800 hover:underline font-medium">
+                      <FileText size={11} /> {viewing.cvFileName || 'קורות חיים'} <ExternalLink size={10} />
+                    </a>
+                  )}
+                </div>
+                {linkedPositions.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {linkedPositions.map(pos => (
+                      <span key={pos.id} className="text-xs font-semibold bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded-full">
+                        {pos.companyName}{pos.positionTitle ? ` · ${pos.positionTitle}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {(viewing.interviewDate || viewing.startDate || viewing.nonaStatus) && (
+                  <div className="flex flex-wrap gap-2">
+                    {viewing.interviewDate && (
+                      <span className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
+                        <Calendar size={10} />ראיון {formatDateHe(viewing.interviewDate)}{viewing.interviewTime ? ` · ${viewing.interviewTime}` : ''}
+                      </span>
+                    )}
+                    {viewing.startDate && (
+                      <span className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full">
+                        <Calendar size={10} />התחיל {formatDateHe(viewing.startDate)}
+                      </span>
+                    )}
+                    {viewing.nonaStatus && (() => {
+                      const ns = NONA_STATUSES.find(s => s.value === viewing.nonaStatus)
+                      return ns ? <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ns.color}`}>נונה: {ns.label}</span> : null
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* ── WhatsApp chat area ── */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0" style={{ background: '#E5DDD5' }}>
+
+                {/* legacy note — always show as first bubble if exists */}
+                {viewing.notes && (
+                  <div className="flex justify-end mb-1">
+                    <div className="rounded-2xl rounded-br-sm px-3 py-2 max-w-[85%] shadow-sm" style={{ background: '#DCF8C6' }}>
+                      <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">{viewing.notes}</p>
+                      <p className="text-[10px] text-right mt-0.5" style={{ color: '#4caf82' }}>הערה קודמת</p>
+                    </div>
+                  </div>
+                )}
+
+                {notes.length === 0 && !viewing.notes && (
+                  <div className="flex items-center justify-center h-full py-12">
+                    <p className="text-slate-500 text-sm bg-white/60 px-4 py-2 rounded-full">אין עדכונים עדיין — הוסף את הראשון</p>
+                  </div>
+                )}
+
+                {groups.map(group => (
+                  <div key={group.day}>
+                    {/* date separator */}
+                    <div className="flex justify-center my-2">
+                      <span className="text-xs px-3 py-0.5 rounded-full shadow-sm" style={{ background: 'rgba(255,255,255,0.75)', color: '#555' }}>
+                        {dayLabel(group.day)}
+                      </span>
+                    </div>
+                    {/* bubbles */}
+                    {group.notes.map(n => (
+                      <div key={n.id} className="flex justify-end mb-1">
+                        <div className="rounded-2xl rounded-br-sm px-3 py-2 max-w-[85%] shadow-sm" style={{ background: '#DCF8C6' }}>
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">{n.text}</p>
+                          <p className="text-[10px] text-right mt-0.5" style={{ color: '#4caf82' }}>
+                            {new Date(n.createdAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} ✓✓
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* ── WhatsApp-style input ── */}
+              <div className="flex items-end gap-2 px-3 py-2 shrink-0" style={{ background: '#F0F0F0' }}>
+                <textarea
+                  value={newNote}
+                  onChange={e => setNewNote(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote() }
+                  }}
+                  placeholder="הוסף עדכון... (Shift+Enter לשורה חדשה)"
+                  className="flex-1 rounded-2xl px-4 py-2 text-sm resize-none outline-none border-0 shadow-sm"
+                  style={{ background: '#fff', maxHeight: '96px' }}
+                  rows={1}
+                />
                 <button
-                  onClick={() => { setViewing(null); openEdit(viewing) }}
-                  className="p-2 rounded-lg bg-white/20 text-white hover:bg-white/30 transition"
+                  onClick={addNote}
+                  disabled={!newNote.trim()}
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow shrink-0 transition-opacity disabled:opacity-40"
+                  style={{ background: '#25D366' }}
                 >
-                  <Edit2 size={16} />
-                </button>
-                <button onClick={() => setViewing(null)} className="p-2 rounded-lg bg-white/20 text-white hover:bg-white/30 transition">
-                  <X size={16} />
+                  <Send size={16} />
                 </button>
               </div>
-            </div>
 
-            {/* body */}
-            <div className="p-6 space-y-4">
-              {/* phone */}
-              <a href={`tel:${viewing.phone}`} className="flex items-center gap-3 text-brand-600 hover:underline">
-                <Phone size={18} />
-                <span className="text-lg font-mono font-semibold">{viewing.phone}</span>
-              </a>
-
-              <div className="grid grid-cols-2 gap-4">
-                {/* age + city */}
-                {(viewing.age || viewing.city) && (
-                  <div className="flex items-center gap-2 text-slate-600">
-                    <MapPin size={15} className="text-slate-400 shrink-0" />
-                    <span className="text-sm">
-                      {viewing.age ? `גיל ${viewing.age}` : ''}
-                      {viewing.age && viewing.city ? ' · ' : ''}
-                      {viewing.city || ''}
-                    </span>
-                  </div>
-                )}
-
-                {/* source */}
-                {viewing.source && (
-                  <div className="flex items-center gap-2 text-slate-600">
-                    <User size={15} className="text-slate-400 shrink-0" />
-                    <span className="text-sm">{viewing.source}</span>
-                  </div>
-                )}
-
-                {/* position type */}
-                {viewing.positionType && (
-                  <div className="flex items-center gap-2 text-slate-600">
-                    <Briefcase size={15} className="text-slate-400 shrink-0" />
-                    <span className="text-sm">{viewing.positionType}</span>
-                  </div>
-                )}
-
-                {/* linked position */}
-                {viewing.savedPositionId && (() => {
-                  const pos = positions.find(p => p.id === viewing.savedPositionId)
-                  return pos ? (
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <Briefcase size={15} className="text-brand-500 shrink-0" />
-                      <span className="text-sm font-medium text-brand-700">{pos.companyName}{pos.positionTitle ? ` · ${pos.positionTitle}` : ''}</span>
-                    </div>
-                  ) : null
-                })()}
+              {/* ── footer ── */}
+              <div className="px-5 py-3 border-t border-slate-100 flex gap-3 shrink-0 bg-white rounded-b-2xl">
+                <button onClick={() => { setViewing(null); openEdit(viewing) }} className="btn-primary flex-1 text-sm">
+                  <Edit2 size={14} /> ערוך פרטים
+                </button>
+                <button onClick={() => { remove(viewing.id); setViewing(null) }} className="px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
+                  <Trash2 size={14} />
+                </button>
               </div>
 
-              {/* dates */}
-              {(viewing.interviewDate || viewing.startDate) && (
-                <div className="flex gap-4 flex-wrap">
-                  {viewing.interviewDate && (
-                    <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg">
-                      <Calendar size={14} />
-                      <span className="text-sm font-medium">ראיון: {formatDateHe(viewing.interviewDate)}</span>
-                    </div>
-                  )}
-                  {viewing.startDate && (
-                    <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg">
-                      <Calendar size={14} />
-                      <span className="text-sm font-medium">התחיל: {formatDateHe(viewing.startDate)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* nona status */}
-              {viewing.nonaStatus && (() => {
-                const ns = NONA_STATUSES.find(s => s.value === viewing.nonaStatus)
-                return ns ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-500">נונה:</span>
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ns.color}`}>{ns.label}</span>
-                  </div>
-                ) : null
-              })()}
-
-              {/* notes */}
-              {viewing.notes && (
-                <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
-                  {viewing.notes}
-                </div>
-              )}
-
-              {/* meta */}
-              <div className="flex justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
-                <span>נכנס: {formatDateHe(viewing.createdAt.split('T')[0])}</span>
-                <span>עדכון: {formatDateHe(viewing.updatedAt.split('T')[0])}</span>
-              </div>
-            </div>
-
-            {/* footer actions */}
-            <div className="px-6 pb-5 flex gap-3">
-              <button
-                onClick={() => { setViewing(null); openEdit(viewing) }}
-                className="btn-primary flex-1"
-              >
-                <Edit2 size={15} /> ערוך מועמד
-              </button>
-              <button
-                onClick={() => { remove(viewing.id); setViewing(null) }}
-                className="px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition"
-              >
-                <Trash2 size={15} />
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
@@ -1017,112 +1299,3 @@ function StatChip({ label, value, color, bg }: { label: string; value: number; c
   )
 }
 
-// ── CandidateCard ─────────────────────────────────────────────────────────────
-
-function CandidateCard({
-  candidate, statusOrder, onMove, onEdit, onDelete, onView
-}: {
-  candidate:   Candidate
-  statusOrder: CandidateStatus[]
-  onMove:      (c: Candidate, dir: 1 | -1) => void
-  onEdit:      (c: Candidate) => void
-  onDelete:    (id: string) => void
-  onView:      (c: Candidate) => void
-}) {
-  const idx      = statusOrder.indexOf(candidate.status)
-  const canPrev  = idx > 0
-  const canNext  = idx < statusOrder.length - 1
-  const daysIn   = daysSince(candidate.createdAt)
-  const daysStage = daysSince(candidate.updatedAt)
-
-  return (
-    <div
-      className="bg-white rounded-lg border border-slate-200 p-2.5 shadow-sm space-y-1.5 cursor-pointer hover:border-brand-300 hover:shadow-md transition-all"
-      onClick={() => onView(candidate)}
-    >
-      {/* name + actions */}
-      <div className="flex items-start justify-between gap-1">
-        <button
-          onClick={e => { e.stopPropagation(); onView(candidate) }}
-          className="font-semibold text-brand-700 text-sm leading-tight hover:underline text-right"
-        >
-          {candidate.name}
-        </button>
-        <div className="flex gap-0.5 shrink-0">
-          <button onClick={e => { e.stopPropagation(); onEdit(candidate) }} className="p-0.5 text-slate-300 hover:text-brand-600">
-            <Edit2 size={12} />
-          </button>
-          <button onClick={e => { e.stopPropagation(); onDelete(candidate.id) }} className="p-0.5 text-slate-300 hover:text-red-500">
-            <Trash2 size={12} />
-          </button>
-        </div>
-      </div>
-
-      {/* phone */}
-      <a href={`tel:${candidate.phone}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
-        <Phone size={11} />
-        {candidate.phone}
-      </a>
-
-      {/* position + source */}
-      {candidate.positionType && (
-        <div className="text-xs text-slate-600 truncate font-medium">{candidate.positionType}</div>
-      )}
-      {candidate.source && (
-        <div className="text-xs text-slate-400 truncate">📍 {candidate.source}</div>
-      )}
-      {(candidate.age || candidate.city) && (
-        <div className="text-xs text-slate-400 truncate">
-          {candidate.age ? `גיל ${candidate.age}` : ''}
-          {candidate.age && candidate.city ? ' · ' : ''}
-          {candidate.city || ''}
-        </div>
-      )}
-
-      {/* interview / start date */}
-      {candidate.status === 'interview_scheduled' && candidate.interviewDate && (
-        <div className="text-xs text-indigo-600 font-semibold">
-          📅 ראיון: {new Date(candidate.interviewDate + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
-        </div>
-      )}
-      {candidate.status === 'started_working' && candidate.startDate && (
-        <div className="text-xs text-emerald-600 font-semibold">
-          ✅ התחיל: {new Date(candidate.startDate + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
-        </div>
-      )}
-
-      {/* notes */}
-      {candidate.notes && (
-        <div className="text-xs text-slate-500 bg-slate-50 rounded px-2 py-1 line-clamp-2">
-          {candidate.notes}
-        </div>
-      )}
-
-      {/* time info */}
-      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5 border-t border-slate-100">
-        <span>נכנס {daysIn === 0 ? 'היום' : `לפני ${daysIn}י׳`}</span>
-        <span className={daysStage > 7 ? 'text-orange-500 font-semibold' : ''}>
-          {daysStage === 0 ? 'שלב היום' : `${daysStage}י׳ בשלב`}
-        </span>
-      </div>
-
-      {/* move buttons */}
-      <div className="flex justify-between">
-        <button
-          onClick={e => { e.stopPropagation(); onMove(candidate, -1) }}
-          disabled={!canPrev}
-          className="p-1 rounded text-slate-400 hover:text-slate-600 disabled:opacity-20"
-        >
-          <ChevronRight size={14} />
-        </button>
-        <button
-          onClick={e => { e.stopPropagation(); onMove(candidate, 1) }}
-          disabled={!canNext}
-          className="p-1 rounded text-slate-400 hover:text-slate-600 disabled:opacity-20"
-        >
-          <ChevronLeft size={14} />
-        </button>
-      </div>
-    </div>
-  )
-}

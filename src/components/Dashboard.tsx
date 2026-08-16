@@ -8,8 +8,8 @@ import {
   Activity, Building2, Calendar, BarChart2, GitBranch, Award,
   CheckSquare, AlertCircle, Percent,
 } from 'lucide-react'
-import type { DailyReport, DashboardTab, PipelineCompany, SavedPosition, Task } from '../types'
-import { PIPELINE_STAGE_LABELS, PIPELINE_STAGE_COLORS } from '../types'
+import type { DailyReport, DashboardTab, PipelineCompany, SavedPosition, Task, Candidate } from '../types'
+import { PIPELINE_STAGE_LABELS, PIPELINE_STAGE_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
 import {
   todayISO, getWeekStart, getWeekDates, reportsForWeek, reportsForMonth,
   reportForDate, formatDateShortHe, getDayNameHe, formatMonthHe, formatCurrency,
@@ -20,11 +20,12 @@ import {
 import AlertsBanner from './AlertsBanner'
 
 interface Props {
-  reports:   DailyReport[]
-  positions: SavedPosition[]
-  pipeline:  PipelineCompany[]
-  tasks:     Task[]
-  onNav:     (v: 'tasks' | 'pipeline') => void
+  reports:    DailyReport[]
+  positions:  SavedPosition[]
+  pipeline:   PipelineCompany[]
+  tasks:      Task[]
+  candidates: Candidate[]
+  onNav:      (v: 'tasks' | 'pipeline' | 'candidates') => void
 }
 
 const COLORS = { blue: '#2563eb', emerald: '#10b981', amber: '#f59e0b', violet: '#7c3aed', red: '#ef4444' }
@@ -85,7 +86,7 @@ function FunnelBar({ label, value, total, pct, color }: {
   )
 }
 
-export default function Dashboard({ reports, positions, pipeline, tasks, onNav }: Props) {
+export default function Dashboard({ reports, positions, pipeline, tasks, candidates, onNav }: Props) {
   const [tab, setTab] = useState<DashboardTab>('daily')
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null)
 
@@ -132,7 +133,7 @@ export default function Dashboard({ reports, positions, pipeline, tasks, onNav }
         <DashTab id="company" active={tab==='company'} label="לפי חברה" icon={<Building2 size={15}/>}  onClick={setTab} />
       </div>
 
-      {tab === 'daily'   && <DailyView   report={todayReport} pipeline={pipeline} tasks={openTasks} onNav={onNav} />}
+      {tab === 'daily'   && <DailyView   report={todayReport} pipeline={pipeline} tasks={openTasks} candidates={candidates} onNav={onNav} />}
       {tab === 'weekly'  && <WeeklyView  reports={reports} positions={positions} weekStart={weekStart} />}
       {tab === 'monthly' && <MonthlyView reports={reports} positions={positions} year={now.getFullYear()} month={now.getMonth()} />}
       {tab === 'company' && <CompanyView reports={reports} selected={selectedCompany} onSelect={setSelectedCompany} />}
@@ -143,11 +144,28 @@ export default function Dashboard({ reports, positions, pipeline, tasks, onNav }
 // ════════════════════════════════════════
 // DAILY VIEW
 // ════════════════════════════════════════
-function DailyView({ report, pipeline, tasks, onNav }: {
-  report: DailyReport | null; pipeline: PipelineCompany[]; tasks: Task[]; onNav: (v: 'tasks' | 'pipeline') => void
+const TERMINAL = new Set(['placement_complete', 'irrelevant'])
+
+function stuckDays(c: Candidate): number {
+  const threshold = c.status === 'new' ? 2 : 7
+  const days = Math.floor((Date.now() - new Date(c.updatedAt).getTime()) / 86_400_000)
+  return days >= threshold ? days : 0
+}
+
+function DailyView({ report, pipeline, tasks, candidates, onNav }: {
+  report:     DailyReport | null
+  pipeline:   PipelineCompany[]
+  tasks:      Task[]
+  candidates: Candidate[]
+  onNav:      (v: 'tasks' | 'pipeline' | 'candidates') => void
 }) {
   const activePipeline = pipeline.filter(c => c.stage !== 'lost' && c.stage !== 'signed')
   const todayTasks     = tasks.filter(t => t.dueDate === todayISO())
+
+  const stuckCandidates = candidates
+    .filter(c => !TERMINAL.has(c.status) && stuckDays(c) > 0)
+    .map(c => ({ ...c, _days: stuckDays(c) }))
+    .sort((a, b) => b._days - a._days)
 
   const totalLeads    = report ? report.jobs.reduce((s, j) => s + j.leadsIn, 0) : 0
   const totalCost     = report ? report.jobs.reduce((s, j) => s + j.campaignCost, 0) : 0
@@ -180,6 +198,104 @@ function DailyView({ report, pipeline, tasks, onNav }: {
           </div>
         </div>
       )}
+
+      {stuckCandidates.length > 0 && (
+        <button
+          onClick={() => onNav('candidates')}
+          className="w-full text-right card border-r-4 border-r-red-400 bg-red-50 hover:bg-red-100 transition"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-red-800 flex items-center gap-2">
+              <AlertCircle size={16} className="text-red-500" />
+              {stuckCandidates.length} מועמדים דורשים טיפול
+            </h3>
+            <span className="text-xs text-red-600">לצפייה ←</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            {stuckCandidates.slice(0, 5).map(c => (
+              <div key={c.id} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${c._days > 14 ? 'bg-red-500' : 'bg-orange-400'}`} />
+                  <span className="font-medium text-slate-800">{c.name}</span>
+                  <span className="text-xs text-slate-500">{CANDIDATE_STATUS_LABELS[c.status]}</span>
+                </div>
+                <span className={`text-xs font-semibold ${c._days > 14 ? 'text-red-600' : 'text-orange-600'}`}>
+                  {c._days} ימים בשלב
+                </span>
+              </div>
+            ))}
+            {stuckCandidates.length > 5 && (
+              <p className="text-xs text-red-600">ועוד {stuckCandidates.length - 5} מועמדים...</p>
+            )}
+          </div>
+        </button>
+      )}
+
+      {/* ── ראיונות קרובים ── */}
+      {(() => {
+        const todayStr = todayISO()
+        const nowMs    = Date.now()
+        const withDates = candidates
+          .filter(c => c.status === 'interview_scheduled' && c.interviewDate)
+          .map(c => {
+            const ms = new Date(`${c.interviewDate}T${c.interviewTime ?? '00:00'}`).getTime()
+            return { ...c, _ms: ms }
+          })
+          .sort((a, b) => a._ms - b._ms)
+
+        if (withDates.length === 0) return null
+
+        return (
+          <button
+            onClick={() => onNav('candidates')}
+            className="w-full text-right card border-r-4 border-r-indigo-400 hover:bg-indigo-50/40 transition"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-indigo-800 flex items-center gap-2">
+                <Calendar size={16} className="text-indigo-500" />
+                ראיונות קרובים ({withDates.length})
+              </h3>
+              <span className="text-xs text-indigo-600">לכל המועמדים ←</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {withDates.slice(0, 6).map(c => {
+                const isToday  = c.interviewDate === todayStr
+                const isPast   = c._ms < nowMs
+                return (
+                  <div key={c.id} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${
+                        isToday && !isPast ? 'bg-indigo-500' : isPast ? 'bg-slate-300' : 'bg-indigo-300'
+                      }`} />
+                      <span className="font-medium text-slate-800 truncate">{c.name}</span>
+                      {c.positionType && (
+                        <span className="text-xs text-slate-400 truncate hidden sm:block">{c.positionType}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 mr-2">
+                      {isToday && !isPast && (
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-full">היום!</span>
+                      )}
+                      {isPast && (
+                        <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">עבר</span>
+                      )}
+                      <span className={`text-xs font-semibold tabular-nums ${
+                        isPast ? 'text-slate-400' : isToday ? 'text-indigo-700' : 'text-slate-700'
+                      }`}>
+                        {formatDateShortHe(c.interviewDate!)}
+                        {c.interviewTime && <span className="text-slate-500"> · {c.interviewTime}</span>}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+              {withDates.length > 6 && (
+                <p className="text-xs text-indigo-400 mt-1">ועוד {withDates.length - 6} ראיונות...</p>
+              )}
+            </div>
+          </button>
+        )
+      })()}
 
       {report ? (
         <>

@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/remind.ts":          { "maxDuration": 15 },
+    "api/add.ts":             { "maxDuration": 10 },
+    "api/client/[token].ts":  { "maxDuration": 10 },
+    "api/weekly-summary.ts":  { "maxDuration": 15 },
+    "api/meta-leads.ts":      { "maxDuration": 15 },
+    "api/apply.ts":           { "maxDuration": 10 }
+  }
+}

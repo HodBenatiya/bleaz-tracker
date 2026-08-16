@@ -18,6 +18,9 @@ import Pipeline from './components/Pipeline'
 import Tasks from './components/Tasks'
 import Candidates from './components/Candidates'
 import MarketingROI from './components/MarketingROI'
+import DataView from './components/DataView'
+import Board from './components/Board'
+import Management from './components/Management'
 
 // ── Local upsert helper (keeps state consistent before DB responds) ──
 function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[] {
@@ -29,7 +32,7 @@ function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[]
 }
 
 export default function App() {
-  const [view,          setView]          = useState<View>('dashboard')
+  const [view,          setView]          = useState<View>('management')
   const [reports,       setReports]       = useState<DailyReport[]>([])
   const [positions,     setPositions]     = useState<SavedPosition[]>([])
   const [pipeline,      setPipeline]      = useState<PipelineCompany[]>([])
@@ -90,8 +93,19 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
         loadTasks().then(setTasks)
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'candidates' }, () => {
-        loadCandidates().then(setCandidates)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'candidates' }, payload => {
+        const c = (payload.new as { data: Candidate }).data
+        if (!c?.id) return
+        setCandidates(prev => prev.some(x => x.id === c.id) ? prev : [...prev, c])
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'candidates' }, payload => {
+        const c = (payload.new as { data: Candidate }).data
+        if (!c?.id) return
+        setCandidates(prev => prev.map(x => x.id === c.id ? c : x))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'candidates' }, payload => {
+        const id = (payload.old as { id: string }).id
+        setCandidates(prev => prev.filter(x => x.id !== id))
       })
 
       .subscribe()
@@ -132,9 +146,18 @@ export default function App() {
   const handleCandidatesChange = useCallback(async (newCandidates: Candidate[]) => {
     const prevIds = candidates.map(c => c.id)
     const newIds  = newCandidates.map(c => c.id)
+
+    // שמור רק מועמדים שבאמת השתנו — מונע דריסת שינויים של השותף
+    const changed = newCandidates.filter(nc => {
+      const prev = candidates.find(c => c.id === nc.id)
+      if (!prev) return true
+      return JSON.stringify(prev) !== JSON.stringify(nc)
+    })
+    const removed = prevIds.filter(id => !newIds.includes(id))
+
     try {
-      await Promise.all(newCandidates.map(c => upsertCandidate(c)))
-      await Promise.all(prevIds.filter(id => !newIds.includes(id)).map(id => deleteCandidate(id)))
+      if (changed.length > 0)  await Promise.all(changed.map(c => upsertCandidate(c)))
+      if (removed.length > 0)  await Promise.all(removed.map(id => deleteCandidate(id)))
       setCandidates(newCandidates)
     } catch (err) {
       console.error('שגיאה בשמירת מועמד:', err)
@@ -184,6 +207,9 @@ export default function App() {
       {view === 'history'    && <History  reports={reports}   onEdit={handleEdit} onDelete={handleDelete} />}
       {view === 'candidates' && <Candidates candidates={candidates} positions={positions} onChange={handleCandidatesChange} />}
       {view === 'marketing'  && <MarketingROI reports={reports} candidates={candidates} positions={positions} />}
+      {view === 'data'       && <DataView candidates={candidates} positions={positions} onChange={handleCandidatesChange} />}
+      {view === 'board'      && <Board positions={positions} candidates={candidates} />}
+      {view === 'management' && <Management candidates={candidates} positions={positions} reports={reports} onCandidatesChange={handleCandidatesChange} />}
     </Layout>
   )
 }
