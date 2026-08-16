@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronRight, ChevronLeft, ChevronDown, Edit2, Check, X, TrendingUp, DollarSign, Users, Clock, AlertCircle, CalendarCheck } from 'lucide-react'
 import type { Candidate, SavedPosition, DailyReport } from '../types'
+import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
 
 const PLACEMENT_FEE = 5000
 
@@ -757,6 +758,8 @@ function WeeklySection({ candidates, positions, monthFilter }: {
   positions:   SavedPosition[]
   monthFilter: MonthFilter
 }) {
+  const [panel, setPanel] = useState<{ label: string; groups: PosGroup[] } | null>(null)
+
   const { start: wStart, end: wEnd } = getWeekBounds(0) // always current week
   const fmt2 = (d: Date) => d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })
   const wRange = `${fmt2(wStart)}–${fmt2(wEnd)}`
@@ -832,70 +835,98 @@ function WeeklySection({ candidates, positions, monthFilter }: {
 
       {/* Rows */}
       <div className="divide-y divide-slate-100">
-        {specs.map(s => (
-          <div key={s.label} className="flex items-center px-5 py-2.5 hover:bg-slate-50 transition">
-            <span className="text-sm text-slate-600 flex-1">{s.label}</span>
-            <div className="flex gap-3">
-              <WNum groups={s.monthly} color={s.color} hint={s.hint} total={uniq(s.monthly)} />
-              <WNum groups={s.weekly}  color={s.color} hint={s.hint} total={uniq(s.weekly)} weekly />
+        {specs.map(s => {
+          const mActive = panel?.label === s.label + '_m'
+          const wActive = panel?.label === s.label + '_w'
+          return (
+            <div key={s.label} className={`flex items-center px-5 py-2.5 transition ${mActive || wActive ? 'bg-slate-50' : 'hover:bg-slate-50'}`}>
+              <span className="text-sm text-slate-600 flex-1">{s.label}</span>
+              <div className="flex gap-3">
+                <WNum groups={s.monthly} color={s.color} hint={s.hint} total={uniq(s.monthly)}
+                  active={mActive}
+                  onClick={() => setPanel(p => p?.label === s.label+'_m' ? null : { label: s.label+'_m', groups: s.monthly })} />
+                <WNum groups={s.weekly}  color={s.color} hint={s.hint} total={uniq(s.weekly)} weekly
+                  active={wActive}
+                  onClick={() => setPanel(p => p?.label === s.label+'_w' ? null : { label: s.label+'_w', groups: s.weekly })} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Expanded panel */}
+      {panel && (() => {
+        const allCands = [...new Map(panel.groups.flatMap(g => g.cands).map(c => [c.id,c])).values()]
+        const candPos  = new Map(panel.groups.flatMap(g => g.cands.map(c => [c.id, g.pos])))
+        const label    = panel.label.replace(/_[mw]$/, '')
+        return (
+          <div className="border-t border-slate-200 bg-slate-50">
+            <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-100">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                {label} — {allCands.length} מועמדים
+              </span>
+              <button onClick={() => setPanel(null)} className="text-slate-400 hover:text-slate-600 transition">
+                <X size={14} />
+              </button>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+              {allCands.map(c => {
+                const pos = candPos.get(c.id)
+                return (
+                  <div key={c.id} className="flex items-center gap-3 px-5 py-2.5 bg-white hover:bg-slate-50 transition">
+                    <div className="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold shrink-0">
+                      {c.name.charAt(0)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-800 text-sm">{c.name}</div>
+                      <div className="text-xs text-slate-400">
+                        {pos?.companyName ?? '—'}
+                        {c.interviewDate ? ` · ראיון: ${fmtDate(c.interviewDate)}` : ''}
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <a href={`tel:${c.phone}`} className="text-xs text-slate-500 hover:text-brand-600 transition">{c.phone}</a>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${CANDIDATE_STATUS_COLORS[c.status]}`}>
+                        {CANDIDATE_STATUS_LABELS[c.status]}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
-        ))}
-      </div>
+        )
+      })()}
     </div>
   )
 }
 
-function WNum({ total, color, hint, groups, weekly }: {
+function WNum({ total, color, weekly, active, onClick }: {
   total:   number
   color:   string
-  hint?:   'interviewDate'
-  groups:  PosGroup[]
   weekly?: boolean
+  active?: boolean
+  onClick: () => void
+  groups:  PosGroup[]
+  hint?:   'interviewDate'
 }) {
-  const [show, setShow] = useState(false)
   const bg: Record<string,string> = {
-    slate:  'bg-slate-100 text-slate-700',
-    blue:   weekly ? 'bg-blue-600 text-white'   : 'bg-blue-100 text-blue-700',
-    orange: weekly ? 'bg-orange-500 text-white'  : 'bg-orange-100 text-orange-700',
-    purple: weekly ? 'bg-purple-600 text-white'  : 'bg-purple-100 text-purple-700',
-    red:    weekly ? 'bg-red-500 text-white'     : 'bg-red-100 text-red-700',
+    slate:  active ? 'bg-slate-400 text-white'   : 'bg-slate-100 text-slate-700',
+    blue:   weekly ? 'bg-blue-600 text-white'    : active ? 'bg-blue-700 text-white'   : 'bg-blue-100 text-blue-700',
+    orange: weekly ? 'bg-orange-500 text-white'  : active ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-700',
+    purple: weekly ? 'bg-purple-600 text-white'  : active ? 'bg-purple-700 text-white' : 'bg-purple-100 text-purple-700',
+    red:    weekly ? 'bg-red-500 text-white'     : active ? 'bg-red-600 text-white'    : 'bg-red-100 text-red-700',
   }
-  const hintStr = (c: Candidate) =>
-    hint === 'interviewDate' && c.interviewDate ? fmtDate(c.interviewDate) : null
-
   return (
-    <div className="w-16 flex items-center justify-center relative"
-      onMouseEnter={() => total > 0 && setShow(true)}
-      onMouseLeave={() => setShow(false)}>
-      <span className={`inline-flex items-center justify-center w-9 h-9 rounded-xl font-bold text-sm select-none
-        ${total > 0 ? (bg[color] ?? 'bg-slate-100 text-slate-700') + ' cursor-pointer' : 'text-slate-300 cursor-default'}`}>
+    <div className="w-16 flex items-center justify-center">
+      <button
+        onClick={() => total > 0 && onClick()}
+        className={`inline-flex items-center justify-center w-9 h-9 rounded-xl font-bold text-sm select-none transition
+          ${total > 0 ? (bg[color] ?? 'bg-slate-100 text-slate-700') + ' cursor-pointer hover:opacity-80' : 'text-slate-300 cursor-default'}
+          ${active ? 'ring-2 ring-offset-1 ring-slate-400' : ''}`}
+      >
         {total > 0 ? total : '—'}
-      </span>
-
-      {show && total > 0 && (
-        <div className="absolute z-[200] bg-white border border-slate-200 rounded-xl shadow-xl py-2 text-right"
-          style={{ bottom: '110%', left: '50%', transform: 'translateX(-50%)', minWidth: 210, pointerEvents: 'none' }}>
-          {groups.map(g => (
-            <div key={g.pos.id}>
-              <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase bg-slate-50">
-                {g.pos.companyName}{g.pos.positionTitle ? ` · ${g.pos.positionTitle}` : ''} ({g.cands.length})
-              </div>
-              {g.cands.map(c => (
-                <div key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                  <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
-                    {c.name.charAt(0)}
-                  </div>
-                  <div className="min-w-0">
-                    <span className="font-semibold text-slate-800">{c.name}</span>
-                    {hintStr(c) && <span className="text-[10px] text-slate-400 mr-1.5">{hintStr(c)}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
+      </button>
     </div>
   )
 }
