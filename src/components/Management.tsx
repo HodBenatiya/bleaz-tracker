@@ -754,57 +754,51 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
   const [weekOffset, setWeekOffset] = useState(0)
   const { start: wStart, end: wEnd, label: weekLabel } = getWeekBounds(weekOffset)
 
-  const fmt2 = (d: Date) => d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })
-  const weekDateRange = `${fmt2(wStart)} — ${fmt2(wEnd)}`
+  const fmt2     = (d: Date) => d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })
+  const weekRange = `${fmt2(wStart)} — ${fmt2(wEnd)}`
 
   const active = positions.filter(p => p.isActive)
 
-  function inWeek(dateStr?: string): boolean {
-    if (!dateStr) return false
-    const d = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00')
+  const inWeek = (s?: string) => {
+    if (!s) return false
+    const d = new Date(s.includes('T') ? s : s + 'T12:00:00')
     return d >= wStart && d <= wEnd
   }
-
-  function linkedToPos(c: Candidate, posId: string): boolean {
-    return !!(
-      c.savedPositionIds?.includes(posId) ||
-      c.savedPositionId === posId ||
-      (c.interviewHistory ?? []).some(h => h.savedPositionId === posId)
-    )
+  const linked = (c: Candidate, id: string) => !!(
+    c.savedPositionIds?.includes(id) || c.savedPositionId === id ||
+    (c.interviewHistory ?? []).some(h => h.savedPositionId === id)
+  )
+  const iCount = (c: Candidate) => (c.interviewHistory?.length ?? 0) + (c.status === 'interview_scheduled' ? 1 : 0)
+  const hadItvW = (c: Candidate, id: string) => {
+    if (c.status === 'interview_scheduled' && c.interviewDate && inWeek(c.interviewDate) &&
+       (c.savedPositionIds?.includes(id) || c.savedPositionId === id)) return true
+    return (c.interviewHistory ?? []).some(h => h.savedPositionId === id && inWeek(h.date))
   }
 
-  function totalInterviewCount(c: Candidate): number {
-    return (c.interviewHistory?.length ?? 0) + (c.status === 'interview_scheduled' ? 1 : 0)
-  }
+  const PIPE = ['relevant','called','screening','call_scheduled','future_relevant','sent_to_client','interview_scheduled']
 
-  function hadInterviewAtPosInWeek(c: Candidate, posId: string): boolean {
-    if (
-      c.status === 'interview_scheduled' && c.interviewDate && inWeek(c.interviewDate) &&
-      (c.savedPositionIds?.includes(posId) || c.savedPositionId === posId)
-    ) return true
-    return (c.interviewHistory ?? []).some(h => h.savedPositionId === posId && inWeek(h.date))
-  }
+  // Per metric: array of { pos, cands[] } — for tooltip breakdown by position
+  type PosGroup = { pos: SavedPosition; cands: Candidate[] }
+  const metric = (fn: (posId: string) => Candidate[]): PosGroup[] =>
+    active.map(pos => ({ pos, cands: fn(pos.id) })).filter(g => g.cands.length > 0)
 
-  const PIPELINE_STATUSES = ['relevant', 'called', 'screening', 'call_scheduled', 'future_relevant', 'sent_to_client', 'interview_scheduled']
-
-  const posRows = active.map(pos => {
-    const posId = pos.id
-    const pipe  = candidates.filter(c => PIPELINE_STATUSES.includes(c.status) && linkedToPos(c, posId))
-    const leads = candidates.filter(c => inWeek(c.createdAt) && linkedToPos(c, posId))
-    const sent  = candidates.filter(c => c.status === 'sent_to_client' && linkedToPos(c, posId))
-    const int1  = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) === 1)
-    const int2  = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) > 1)
-    const place = candidates.filter(c => inWeek(c.startDate) && linkedToPos(c, posId))
-    const rej   = candidates.filter(c => c.status === 'irrelevant' && inWeek(c.updatedAt) && linkedToPos(c, posId))
-    return { pos, pipe, leads, sent, int1, int2, place, rej }
-  })
+  const rows: { label: string; color: string; hint?: 'interviewDate'|'startDate'; groups: PosGroup[] }[] = [
+    { label: 'בפייפליין כעת',  color: 'slate',  groups: metric(id => candidates.filter(c => PIPE.includes(c.status) && linked(c,id))) },
+    { label: 'לידים השבוע',    color: 'blue',   groups: metric(id => candidates.filter(c => inWeek(c.createdAt) && linked(c,id))) },
+    { label: 'לפני ראיון',     color: 'orange', groups: metric(id => candidates.filter(c => c.status==='sent_to_client' && linked(c,id))) },
+    { label: 'ראיון ראשון',    color: 'purple', hint: 'interviewDate', groups: metric(id => candidates.filter(c => hadItvW(c,id) && iCount(c)===1)) },
+    { label: 'ראיון שני+',     color: 'indigo', hint: 'interviewDate', groups: metric(id => candidates.filter(c => hadItvW(c,id) && iCount(c)>1)) },
+    { label: 'גויסו',          color: 'green',  hint: 'startDate',    groups: metric(id => candidates.filter(c => inWeek(c.startDate) && linked(c,id))) },
+    { label: 'נפסלו',          color: 'red',    groups: metric(id => candidates.filter(c => c.status==='irrelevant' && inWeek(c.updatedAt) && linked(c,id))) },
+  ]
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      {/* Header */}
       <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
         <div>
           <h3 className="font-bold text-slate-800">בקרה שבועית</h3>
-          <p className="text-xs text-slate-400 mt-0.5">{weekDateRange}</p>
+          <p className="text-xs text-slate-400 mt-0.5">{weekRange}</p>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setWeekOffset(o => o - 1)}
@@ -817,125 +811,86 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
               <span className="absolute -top-2 right-1 text-[9px] bg-brand-600 text-white px-1.5 py-0.5 rounded-full">עכשיו</span>
             )}
           </div>
-          <button onClick={() => setWeekOffset(o => Math.min(0, o + 1))}
-            disabled={weekOffset >= 0}
+          <button onClick={() => setWeekOffset(o => Math.min(0, o + 1))} disabled={weekOffset >= 0}
             className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition disabled:opacity-30">
             <ChevronLeft size={16} />
           </button>
         </div>
       </div>
 
-      {active.length === 0 ? (
-        <div className="py-12 text-center text-slate-400 text-sm">אין משרות פעילות</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ overflow: 'visible' }}>
-            <thead>
-              <tr className="bg-slate-50 text-xs text-slate-500">
-                <th className="text-right px-4 py-2.5 font-semibold">משרה</th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">בפייפליין<br /><span className="font-normal opacity-60">כעת</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">לידים<br /><span className="font-normal opacity-60">השבוע</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">לפני<br /><span className="font-normal opacity-60">ראיון</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">ראיון<br /><span className="font-normal opacity-60">א׳ שבוע</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold leading-tight">ראיון<br /><span className="font-normal opacity-60">ב׳+ שבוע</span></th>
-                <th className="text-center px-3 py-2.5 font-semibold">גויסו</th>
-                <th className="text-center px-3 py-2.5 font-semibold">נפסלו</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {posRows.map(r => (
-                <tr key={r.pos.id} className="hover:bg-slate-50 transition">
-                  <td className="px-4 py-3">
-                    <div className="font-semibold text-slate-800">{r.pos.companyName}</div>
-                    {r.pos.positionTitle && <div className="text-xs text-slate-400">{r.pos.positionTitle}</div>}
-                  </td>
-                  <WCell cands={r.pipe}  color="slate"  label="בפייפליין" />
-                  <WCell cands={r.leads} color="blue"   label="לידים השבוע" />
-                  <WCell cands={r.sent}  color="orange" label="לפני ראיון" />
-                  <WCell cands={r.int1}  color="purple" label="ראיון ראשון" hint="interviewDate" />
-                  <WCell cands={r.int2}  color="indigo" label="ראיון שני+" hint="interviewDate" />
-                  <WCell cands={r.place} color="green"  label="גויסו" hint="startDate" />
-                  <WCell cands={r.rej}   color="red"    label="נפסלו" />
-                </tr>
-              ))}
-              <tr className="bg-slate-50">
-                <td className="px-4 py-2.5 text-sm font-bold text-slate-600">סה"כ</td>
-                <WCell cands={[...new Map(posRows.flatMap(r => r.pipe).map(c => [c.id,c])).values()]}  color="slate"  bold label="בפייפליין" />
-                <WCell cands={[...new Map(posRows.flatMap(r => r.leads).map(c => [c.id,c])).values()]} color="blue"   bold label="לידים" />
-                <WCell cands={[...new Map(posRows.flatMap(r => r.sent).map(c => [c.id,c])).values()]}  color="orange" bold label="לפני ראיון" />
-                <WCell cands={[...new Map(posRows.flatMap(r => r.int1).map(c => [c.id,c])).values()]}  color="purple" bold label="ראיון ראשון" hint="interviewDate" />
-                <WCell cands={[...new Map(posRows.flatMap(r => r.int2).map(c => [c.id,c])).values()]}  color="indigo" bold label="ראיון שני+" hint="interviewDate" />
-                <WCell cands={[...new Map(posRows.flatMap(r => r.place).map(c => [c.id,c])).values()]} color="green"  bold label="גויסו" hint="startDate" />
-                <WCell cands={[...new Map(posRows.flatMap(r => r.rej).map(c => [c.id,c])).values()]}   color="red"    bold label="נפסלו" />
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Metric rows */}
+      <div className="divide-y divide-slate-100">
+        {rows.map(row => {
+          const total = [...new Map(row.groups.flatMap(g => g.cands).map(c => [c.id,c])).values()].length
+          return (
+            <WRow key={row.label} label={row.label} color={row.color}
+              hint={row.hint} total={total} groups={row.groups} />
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-function WCell({ cands, color, bold, label, hint }: {
-  cands:  Candidate[]
+type PosGroup = { pos: SavedPosition; cands: Candidate[] }
+
+function WRow({ label, color, hint, total, groups }: {
+  label:  string
   color:  string
-  bold?:  boolean
-  label?: string
   hint?:  'interviewDate' | 'startDate'
+  total:  number
+  groups: PosGroup[]
 }) {
   const [show, setShow] = useState(false)
-  const v = cands.length
-  const on: Record<string, string> = {
-    slate:  'bg-slate-200 text-slate-700',
-    blue:   'bg-blue-100 text-blue-700',
+  const bg: Record<string,string> = {
+    slate:  'bg-slate-100 text-slate-700',
+    blue:   'bg-blue-100  text-blue-700',
     orange: 'bg-orange-100 text-orange-700',
     purple: 'bg-purple-100 text-purple-700',
     indigo: 'bg-indigo-100 text-indigo-700',
     green:  'bg-green-100 text-green-700',
-    red:    'bg-red-100 text-red-700',
+    red:    'bg-red-100   text-red-700',
   }
-  const hintVal = (c: Candidate) => {
+  const hintStr = (c: Candidate) => {
     if (hint === 'interviewDate' && c.interviewDate) return fmtDate(c.interviewDate)
-    if (hint === 'startDate'    && c.startDate)      return fmtDate(c.startDate)
+    if (hint === 'startDate'     && c.startDate)     return fmtDate(c.startDate)
     return null
   }
   return (
-    <td className="px-3 py-3 text-center" style={{ position: 'relative', overflow: 'visible' }}>
-      <span
-        className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm select-none
-          ${bold ? 'font-bold' : 'font-semibold'}
-          ${v > 0 ? on[color] + ' cursor-pointer' : 'text-slate-300 cursor-default'}`}
-        onMouseEnter={() => v > 0 && setShow(true)}
-        onMouseLeave={() => setShow(false)}
-      >
-        {v > 0 ? v : '—'}
-      </span>
+    <div className="flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition relative">
+      <span className="text-sm text-slate-600">{label}</span>
+      <div className="relative"
+        onMouseEnter={() => total > 0 && setShow(true)}
+        onMouseLeave={() => setShow(false)}>
+        <span className={`inline-flex items-center justify-center w-9 h-9 rounded-xl font-bold text-base select-none
+          ${total > 0 ? bg[color] + ' cursor-pointer' : 'text-slate-300 cursor-default'}`}>
+          {total > 0 ? total : '—'}
+        </span>
 
-      {show && v > 0 && (
-        <div
-          className="absolute z-[200] bg-white border border-slate-200 rounded-xl shadow-xl py-2 text-right"
-          style={{ bottom: '110%', left: '50%', transform: 'translateX(-50%)', minWidth: 180, pointerEvents: 'none' }}
-        >
-          {label && (
-            <div className="px-3 pb-1.5 mb-1 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-              {label} ({v})
-            </div>
-          )}
-          <div className="max-h-52 overflow-y-auto">
-            {cands.map(c => (
-              <div key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
-                  {c.name.charAt(0)}
+        {show && total > 0 && (
+          <div className="absolute z-[200] bg-white border border-slate-200 rounded-xl shadow-xl py-2 text-right"
+            style={{ bottom: '110%', left: '50%', transform: 'translateX(-50%)', minWidth: 200, pointerEvents: 'none' }}>
+            {groups.map(g => (
+              <div key={g.pos.id}>
+                <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide bg-slate-50">
+                  {g.pos.companyName}{g.pos.positionTitle ? ` · ${g.pos.positionTitle}` : ''} ({g.cands.length})
                 </div>
-                <div className="min-w-0">
-                  <div className="font-semibold text-slate-800 truncate">{c.name}</div>
-                  {hintVal(c) && <div className="text-slate-400">{hintVal(c)}</div>}
-                </div>
+                {g.cands.map(c => (
+                  <div key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                    <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
+                      {c.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-slate-800">{c.name}</span>
+                      {hintStr(c) && <span className="text-slate-400 mr-1.5">{hintStr(c)}</span>}
+                    </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
-        </div>
-      )}
-    </td>
+        )}
+      </div>
+    </div>
   )
 }
