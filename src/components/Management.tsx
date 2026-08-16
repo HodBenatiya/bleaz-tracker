@@ -788,29 +788,16 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
   const PIPELINE_STATUSES = ['relevant', 'called', 'screening', 'call_scheduled', 'future_relevant', 'sent_to_client', 'interview_scheduled']
 
   const posRows = active.map(pos => {
-    const posId      = pos.id
-    const inPipeline = candidates.filter(c => PIPELINE_STATUSES.includes(c.status) && linkedToPos(c, posId)).length
-    const newLeads   = candidates.filter(c => inWeek(c.createdAt) && linkedToPos(c, posId)).length
-    const sentNow    = candidates.filter(c => c.status === 'sent_to_client' && linkedToPos(c, posId)).length
-    const firstInter = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) === 1).length
-    const secInter   = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) > 1).length
-    const placed     = candidates.filter(c => inWeek(c.startDate) && linkedToPos(c, posId)).length
-    const rejected   = candidates.filter(c => c.status === 'irrelevant' && inWeek(c.updatedAt) && linkedToPos(c, posId)).length
-    return { pos, inPipeline, newLeads, sentNow, firstInter, secInter, placed, rejected }
+    const posId = pos.id
+    const pipe  = candidates.filter(c => PIPELINE_STATUSES.includes(c.status) && linkedToPos(c, posId))
+    const leads = candidates.filter(c => inWeek(c.createdAt) && linkedToPos(c, posId))
+    const sent  = candidates.filter(c => c.status === 'sent_to_client' && linkedToPos(c, posId))
+    const int1  = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) === 1)
+    const int2  = candidates.filter(c => hadInterviewAtPosInWeek(c, posId) && totalInterviewCount(c) > 1)
+    const place = candidates.filter(c => inWeek(c.startDate) && linkedToPos(c, posId))
+    const rej   = candidates.filter(c => c.status === 'irrelevant' && inWeek(c.updatedAt) && linkedToPos(c, posId))
+    return { pos, pipe, leads, sent, int1, int2, place, rej }
   })
-
-  const totals = posRows.reduce(
-    (acc, r) => ({
-      inPipeline: acc.inPipeline + r.inPipeline,
-      newLeads:   acc.newLeads   + r.newLeads,
-      sentNow:    acc.sentNow    + r.sentNow,
-      firstInter: acc.firstInter + r.firstInter,
-      secInter:   acc.secInter   + r.secInter,
-      placed:     acc.placed     + r.placed,
-      rejected:   acc.rejected   + r.rejected,
-    }),
-    { inPipeline: 0, newLeads: 0, sentNow: 0, firstInter: 0, secInter: 0, placed: 0, rejected: 0 }
-  )
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -820,10 +807,8 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
           <p className="text-xs text-slate-400 mt-0.5">{weekDateRange}</p>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => setWeekOffset(o => o - 1)}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition"
-          >
+          <button onClick={() => setWeekOffset(o => o - 1)}
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition">
             <ChevronRight size={16} />
           </button>
           <div className="relative px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 min-w-28 text-center">
@@ -832,11 +817,9 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
               <span className="absolute -top-2 right-1 text-[9px] bg-brand-600 text-white px-1.5 py-0.5 rounded-full">עכשיו</span>
             )}
           </div>
-          <button
-            onClick={() => setWeekOffset(o => Math.min(0, o + 1))}
+          <button onClick={() => setWeekOffset(o => Math.min(0, o + 1))}
             disabled={weekOffset >= 0}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition disabled:opacity-30"
-          >
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition disabled:opacity-30">
             <ChevronLeft size={16} />
           </button>
         </div>
@@ -846,7 +829,7 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
         <div className="py-12 text-center text-slate-400 text-sm">אין משרות פעילות</div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" style={{ overflow: 'visible' }}>
             <thead>
               <tr className="bg-slate-50 text-xs text-slate-500">
                 <th className="text-right px-4 py-2.5 font-semibold">משרה</th>
@@ -866,24 +849,24 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
                     <div className="font-semibold text-slate-800">{r.pos.companyName}</div>
                     {r.pos.positionTitle && <div className="text-xs text-slate-400">{r.pos.positionTitle}</div>}
                   </td>
-                  <WCell v={r.inPipeline}  color="slate" />
-                  <WCell v={r.newLeads}    color="blue" />
-                  <WCell v={r.sentNow}     color="orange" />
-                  <WCell v={r.firstInter}  color="purple" />
-                  <WCell v={r.secInter}    color="indigo" />
-                  <WCell v={r.placed}      color="green" />
-                  <WCell v={r.rejected}    color="red" />
+                  <WCell cands={r.pipe}  color="slate"  label="בפייפליין" />
+                  <WCell cands={r.leads} color="blue"   label="לידים השבוע" />
+                  <WCell cands={r.sent}  color="orange" label="לפני ראיון" />
+                  <WCell cands={r.int1}  color="purple" label="ראיון ראשון" hint="interviewDate" />
+                  <WCell cands={r.int2}  color="indigo" label="ראיון שני+" hint="interviewDate" />
+                  <WCell cands={r.place} color="green"  label="גויסו" hint="startDate" />
+                  <WCell cands={r.rej}   color="red"    label="נפסלו" />
                 </tr>
               ))}
               <tr className="bg-slate-50">
                 <td className="px-4 py-2.5 text-sm font-bold text-slate-600">סה"כ</td>
-                <WCell v={totals.inPipeline}  color="slate"  bold />
-                <WCell v={totals.newLeads}    color="blue"   bold />
-                <WCell v={totals.sentNow}     color="orange" bold />
-                <WCell v={totals.firstInter}  color="purple" bold />
-                <WCell v={totals.secInter}    color="indigo" bold />
-                <WCell v={totals.placed}      color="green"  bold />
-                <WCell v={totals.rejected}    color="red"    bold />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.pipe).map(c => [c.id,c])).values()]}  color="slate"  bold label="בפייפליין" />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.leads).map(c => [c.id,c])).values()]} color="blue"   bold label="לידים" />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.sent).map(c => [c.id,c])).values()]}  color="orange" bold label="לפני ראיון" />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.int1).map(c => [c.id,c])).values()]}  color="purple" bold label="ראיון ראשון" hint="interviewDate" />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.int2).map(c => [c.id,c])).values()]}  color="indigo" bold label="ראיון שני+" hint="interviewDate" />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.place).map(c => [c.id,c])).values()]} color="green"  bold label="גויסו" hint="startDate" />
+                <WCell cands={[...new Map(posRows.flatMap(r => r.rej).map(c => [c.id,c])).values()]}   color="red"    bold label="נפסלו" />
               </tr>
             </tbody>
           </table>
@@ -893,7 +876,15 @@ function WeeklySection({ candidates, positions }: { candidates: Candidate[]; pos
   )
 }
 
-function WCell({ v, color, bold }: { v: number; color: string; bold?: boolean }) {
+function WCell({ cands, color, bold, label, hint }: {
+  cands:  Candidate[]
+  color:  string
+  bold?:  boolean
+  label?: string
+  hint?:  'interviewDate' | 'startDate'
+}) {
+  const [show, setShow] = useState(false)
+  const v = cands.length
   const on: Record<string, string> = {
     slate:  'bg-slate-200 text-slate-700',
     blue:   'bg-blue-100 text-blue-700',
@@ -903,11 +894,48 @@ function WCell({ v, color, bold }: { v: number; color: string; bold?: boolean })
     green:  'bg-green-100 text-green-700',
     red:    'bg-red-100 text-red-700',
   }
+  const hintVal = (c: Candidate) => {
+    if (hint === 'interviewDate' && c.interviewDate) return fmtDate(c.interviewDate)
+    if (hint === 'startDate'    && c.startDate)      return fmtDate(c.startDate)
+    return null
+  }
   return (
-    <td className="px-3 py-3 text-center">
-      <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm ${bold ? 'font-bold' : 'font-semibold'} ${v > 0 ? on[color] : 'text-slate-300'}`}>
+    <td className="px-3 py-3 text-center" style={{ position: 'relative', overflow: 'visible' }}>
+      <span
+        className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm select-none
+          ${bold ? 'font-bold' : 'font-semibold'}
+          ${v > 0 ? on[color] + ' cursor-pointer' : 'text-slate-300 cursor-default'}`}
+        onMouseEnter={() => v > 0 && setShow(true)}
+        onMouseLeave={() => setShow(false)}
+      >
         {v > 0 ? v : '—'}
       </span>
+
+      {show && v > 0 && (
+        <div
+          className="absolute z-[200] bg-white border border-slate-200 rounded-xl shadow-xl py-2 text-right"
+          style={{ bottom: '110%', left: '50%', transform: 'translateX(-50%)', minWidth: 180, pointerEvents: 'none' }}
+        >
+          {label && (
+            <div className="px-3 pb-1.5 mb-1 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+              {label} ({v})
+            </div>
+          )}
+          <div className="max-h-52 overflow-y-auto">
+            {cands.map(c => (
+              <div key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
+                  {c.name.charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-800 truncate">{c.name}</div>
+                  {hintVal(c) && <div className="text-slate-400">{hintVal(c)}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </td>
   )
 }
