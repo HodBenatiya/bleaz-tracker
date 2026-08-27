@@ -128,7 +128,8 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
   const chatEndRef         = useRef<HTMLDivElement>(null)
   const posTypeDropdownRef = useRef<HTMLDivElement>(null)
   const statusFilterRef    = useRef<HTMLDivElement>(null)
-  const [importRows,     setImportRows]     = useState<Record<string, string>[]>([])
+  const [importRows,      setImportRows]      = useState<Record<string, string>[]>([])
+  const [positionSearch,  setPositionSearch]  = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cvFileRef    = useRef<HTMLInputElement>(null)
 
@@ -264,10 +265,12 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
     }
   }
 
+  const closeForm = () => { setShowForm(false); setPositionSearch('') }
+
   const submitForm = () => {
     if (!form.name.trim() || !form.phone.trim()) return
     save(form)
-    setShowForm(false)
+    closeForm()
   }
 
   // ── Export ──
@@ -771,7 +774,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
         return (
           <div
             className="fixed inset-0 z-50 bg-black/65 flex items-center justify-center p-6"
-            onClick={() => setShowForm(false)}
+            onClick={closeForm}
           >
             <div
               className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh]"
@@ -784,7 +787,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   <h2 className="text-lg font-bold text-slate-800">{editing ? 'עריכת מועמד' : 'מועמד חדש'}</h2>
                   {editing && <p className="text-xs text-slate-400 font-mono mt-0.5">{form.phone}</p>}
                 </div>
-                <button onClick={() => setShowForm(false)} className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                <button onClick={closeForm} className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
                   <X size={18} />
                 </button>
               </div>
@@ -884,12 +887,37 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                     )}
                   </div>
 
+                  {/* חיפוש משרה */}
+                  {activePositions.length > 3 && (
+                    <div className="px-2 pt-2 pb-1 bg-white border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          placeholder="חיפוש משרה..."
+                          value={positionSearch}
+                          onChange={e => setPositionSearch(e.target.value)}
+                          className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg pr-8 pl-3 py-1.5 outline-none focus:border-brand-400 focus:bg-white transition"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Checkbox / radio list — enlarged */}
                   <div className="min-h-[110px] max-h-48 overflow-y-auto p-2 space-y-0.5 bg-white">
                     {activePositions.length === 0 && (
                       <p className="text-xs text-slate-400 text-center py-4">אין משרות פעילות</p>
                     )}
-                    {activePositions.map(p => {
+                    {activePositions.filter(p => {
+                      if (!positionSearch.trim()) return true
+                      const q = positionSearch.toLowerCase()
+                      return (
+                        p.companyName.toLowerCase().includes(q) ||
+                        p.positionTitle.toLowerCase().includes(q) ||
+                        (p.city ?? '').toLowerCase().includes(q) ||
+                        (p.positionNumber ?? '').includes(q)
+                      )
+                    }).map(p => {
                       const checked = posIds.includes(p.id)
                       return (
                         <label key={p.id} className={`flex items-center gap-3 cursor-pointer rounded-lg px-3 py-2 transition border ${checked ? 'bg-brand-50 border-brand-200' : 'border-transparent hover:bg-slate-50'}`}>
@@ -910,10 +938,17 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                           <div className="text-sm">
                             <span className="font-medium text-slate-800">{p.companyName}</span>
                             {p.positionTitle && <span className="text-slate-400 mr-1"> · {p.positionTitle}</span>}
+                            {p.city && <span className="text-slate-300 mr-1 text-xs"> · {p.city}</span>}
                           </div>
                         </label>
                       )
                     })}
+                    {positionSearch.trim() && activePositions.filter(p => {
+                      const q = positionSearch.toLowerCase()
+                      return p.companyName.toLowerCase().includes(q) || p.positionTitle.toLowerCase().includes(q) || (p.city ?? '').toLowerCase().includes(q) || (p.positionNumber ?? '').includes(q)
+                    }).length === 0 && (
+                      <p className="text-xs text-slate-400 text-center py-4">לא נמצאו משרות תואמות</p>
+                    )}
                   </div>
 
                   {/* הוסף משרה ידנית */}
@@ -1024,7 +1059,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   <button onClick={submitForm} disabled={!form.name.trim() || !form.phone.trim()} className="btn-primary flex-1 disabled:opacity-40">
                     {editing ? 'עדכן' : 'הוסף מועמד'}
                   </button>
-                  <button onClick={() => setShowForm(false)} className="btn-secondary px-8">ביטול</button>
+                  <button onClick={closeForm} className="btn-secondary px-8">ביטול</button>
                 </div>
               </div>
             </div>
