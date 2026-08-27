@@ -10,6 +10,7 @@ export interface SavedPosition {
   positionNumber?: string // מספר משרה במערכת הפנימית
   positionUrl?: string    // לינק למשרה במערכת הפנימית
   clientToken?: string    // טוקן גישה ללינק ציבורי ללקוח
+  salary?: number         // שכר גולמי חודשי (ממנו נגזרת עמלת ההשמה)
   isActive: boolean
   createdAt: string
 

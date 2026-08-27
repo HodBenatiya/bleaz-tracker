@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, ChevronDown, ChevronUp, Phone, ExternalLink, Hash, Link2, Copy, Check } from 'lucide-react'
+import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, ChevronDown, ChevronUp, Phone, ExternalLink, Hash, Link2, Check, Search } from 'lucide-react'
 import type { SavedPosition, Candidate, CandidateStatus } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import { generateId, formatCurrency, calcCostPerLead } from '../utils/helpers'
@@ -17,7 +17,7 @@ const ALL_STATUSES: CandidateStatus[] = [
 ]
 
 const EMPTY: Omit<SavedPosition, 'id' | 'createdAt' | 'isActive' | 'funnelSentToClient' | 'funnelInterviews' | 'funnelAccepted' | 'funnelConfirmed'> = {
-  companyName: '', positionTitle: '', city: '', description: '', positionNumber: '', positionUrl: '',
+  companyName: '', positionTitle: '', city: '', description: '', positionNumber: '', positionUrl: '', salary: undefined,
 }
 
 function numField(label: string, value: number, onChange: (v: number) => void, sub?: string) {
@@ -39,6 +39,7 @@ export default function PositionsManager({ positions, reports, candidates, onCha
   const [expanded,  setExpanded]  = useState<string | null>(null)
   const [saved,     setSaved]     = useState(false)
   const [copiedId,  setCopiedId]  = useState<string | null>(null)
+  const [search,    setSearch]    = useState('')
 
   function generateToken() {
     return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
@@ -69,7 +70,7 @@ export default function PositionsManager({ positions, reports, candidates, onCha
   }
 
   function startEdit(pos: SavedPosition) {
-    setForm({ companyName: pos.companyName, positionTitle: pos.positionTitle, city: pos.city, description: pos.description ?? '', positionNumber: pos.positionNumber ?? '', positionUrl: pos.positionUrl ?? '' })
+    setForm({ companyName: pos.companyName, positionTitle: pos.positionTitle, city: pos.city, description: pos.description ?? '', positionNumber: pos.positionNumber ?? '', positionUrl: pos.positionUrl ?? '', salary: pos.salary })
     setEditingId(pos.id)
     setIsAdding(false)
   }
@@ -141,6 +142,20 @@ export default function PositionsManager({ positions, reports, candidates, onCha
         <div className="alert-blue mb-4"><CheckCircle2 size={16} /> <span className="text-sm font-medium">נשמר</span></div>
       )}
 
+      {/* חיפוש */}
+      {positions.length > 0 && (
+        <div className="relative mb-4">
+          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="חיפוש לפי חברה, תפקיד או עיר..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="input-field pr-9 text-sm"
+          />
+        </div>
+      )}
+
       {isAdding && (
         <PositionForm form={form} onChange={setForm} onSave={handleSaveNew} onCancel={cancelEdit} title="משרה חדשה" />
       )}
@@ -152,11 +167,21 @@ export default function PositionsManager({ positions, reports, candidates, onCha
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {positions.map(pos => {
-            const isOpen    = expanded === pos.id
-            const isEditing = editingId === pos.id
-            const stats     = getCampaignStats(pos.id)
-            const revenue   = pos.funnelConfirmed * 5000
+          {positions.filter(pos => {
+            if (!search.trim()) return true
+            const q = search.toLowerCase()
+            return (
+              pos.companyName.toLowerCase().includes(q) ||
+              pos.positionTitle.toLowerCase().includes(q) ||
+              pos.city.toLowerCase().includes(q) ||
+              (pos.positionNumber ?? '').toLowerCase().includes(q)
+            )
+          }).map(pos => {
+            const isOpen       = expanded === pos.id
+            const isEditing    = editingId === pos.id
+            const stats        = getCampaignStats(pos.id)
+            const placementFee = pos.salary ?? 0
+            const revenue      = pos.funnelConfirmed * (placementFee || 5000)
 
             return (
               <div key={pos.id}
@@ -193,6 +218,12 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                   <div className="flex items-center gap-3">
                     {/* Quick stats */}
                     <div className="hidden sm:flex items-center gap-3 text-xs text-slate-500">
+                      {pos.salary && (
+                        <span className="text-slate-500 font-medium">
+                          ₪{pos.salary.toLocaleString('he-IL')}
+                          <span className="text-slate-400"> משכורת</span>
+                        </span>
+                      )}
                       <span className="text-blue-700 font-medium">{stats.leads} לידים</span>
                       <span className="text-emerald-700 font-medium">{pos.funnelConfirmed} אושרו</span>
                       {revenue > 0 && <span className="text-violet-700 font-medium">{formatCurrency(revenue)}</span>}
@@ -367,11 +398,25 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                           )}
 
                           {/* Revenue summary */}
+                          {pos.salary && (
+                            <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-sm">
+                              <div>
+                                <p className="text-xs text-slate-500">שכר גולמי חודשי</p>
+                                <p className="font-bold text-slate-800">₪{pos.salary.toLocaleString('he-IL')}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs text-slate-500">עמלת השמה (חודש שכר)</p>
+                                <p className="font-bold text-violet-700">₪{pos.salary.toLocaleString('he-IL')}</p>
+                              </div>
+                            </div>
+                          )}
+
                           {pos.funnelConfirmed > 0 && (
                             <div className="mt-3 p-3 bg-emerald-50 rounded-xl border border-emerald-200 flex items-center justify-between">
                               <div>
                                 <p className="text-xs text-emerald-600">הכנסה מאושרת מהמשרה</p>
                                 <p className="text-lg font-black text-emerald-700">{formatCurrency(revenue)}</p>
+                                {!pos.salary && <p className="text-[10px] text-slate-400 mt-0.5">מבוסס על ₪5,000 ברירת מחדל — הוסף שכר לדיוק</p>}
                               </div>
                               {stats.cost > 0 && (
                                 <div className="text-left">
@@ -432,7 +477,7 @@ function PositionForm({ form, onChange, onSave, onCancel, title }: FormProps) {
             value={form.city} onChange={e => onChange({ ...form, city: e.target.value })} />
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <div>
           <label className="label">מספר משרה</label>
           <input type="text" className="input-field font-mono" placeholder="לדוגמה: 4521"
@@ -444,6 +489,12 @@ function PositionForm({ form, onChange, onSave, onCancel, title }: FormProps) {
           <input type="url" className="input-field" placeholder="https://..."
             value={form.positionUrl ?? ''}
             onChange={e => onChange({ ...form, positionUrl: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">שכר גולמי חודשי (₪)</label>
+          <input type="number" min={0} step={500} className="input-field" placeholder="לדוגמה: 8000"
+            value={form.salary ?? ''}
+            onChange={e => onChange({ ...form, salary: e.target.value ? Number(e.target.value) : undefined })} />
         </div>
       </div>
       <div className="mb-4">
