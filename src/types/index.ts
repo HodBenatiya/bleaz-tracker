@@ -224,5 +224,5 @@ export interface Candidate {
   updatedAt: string
 }
 
-export type View = 'dashboard' | 'form' | 'history' | 'positions' | 'pipeline' | 'tasks' | 'candidates' | 'marketing' | 'data' | 'board' | 'management'
+export type View = 'dashboard' | 'form' | 'history' | 'positions' | 'pipeline' | 'tasks' | 'candidates' | 'marketing' | 'data' | 'board' | 'management' | 'meta'
 export type DashboardTab = 'daily' | 'weekly' | 'monthly' | 'company'

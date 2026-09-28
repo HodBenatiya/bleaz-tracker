@@ -21,6 +21,7 @@ import MarketingROI from './components/MarketingROI'
 import DataView from './components/DataView'
 import Board from './components/Board'
 import Management from './components/Management'
+import MetaPage from './components/MetaPage'
 
 // ── Local upsert helper (keeps state consistent before DB responds) ──
 function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[] {
@@ -210,6 +211,7 @@ export default function App() {
       {view === 'data'       && <DataView candidates={candidates} positions={positions} onChange={handleCandidatesChange} />}
       {view === 'board'      && <Board positions={positions} candidates={candidates} />}
       {view === 'management' && <Management candidates={candidates} positions={positions} reports={reports} onCandidatesChange={handleCandidatesChange} />}
+      {view === 'meta'       && <MetaPage savedPositions={positions} reports={reports} onSave={handleSave} />}
     </Layout>
   )
 }

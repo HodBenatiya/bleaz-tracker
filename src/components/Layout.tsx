@@ -1,6 +1,7 @@
 import React from 'react'
-import { BarChart2, ClipboardList, History, Briefcase, GitBranch, CheckSquare, Users, TrendingUp, Database, LayoutDashboard, LineChart } from 'lucide-react'
+import { BarChart2, ClipboardList, History, Briefcase, GitBranch, CheckSquare, Users, TrendingUp, Database, LayoutDashboard, LineChart, Share2 } from 'lucide-react'
 import type { View, Task } from '../types'
+import LiveClock from './LiveClock'
 
 interface Props {
   view:     View
@@ -22,6 +23,7 @@ const PAGE_SUB: Record<View, string> = {
   data:       'כל המועמדים — חיפוש חופשי לפי כל שדה',
   board:      'מצב עדכני לפי משרה — כל הנתונים בזמן אמת',
   management: 'KPIs חודשיים, יעדים, גבייה, אחריות ורווחיות',
+  meta:       'סנכרון מ-Meta Ads Manager וייבוא CSV',
 }
 
 const SIDEBAR_W = 'w-52' // 208px
@@ -43,6 +45,7 @@ export default function Layout({ view, onNav, children, onNewDay, tasks }: Props
     { id: 'pipeline',   label: 'פייפליין',   icon: <GitBranch    size={16} /> },
     { id: 'tasks',      label: 'משימות',     icon: <CheckSquare  size={16} />, badge: urgentCount },
     { id: 'history',    label: 'היסטוריה',   icon: <History      size={16} /> },
+    { id: 'meta',       label: 'Meta Ads',   icon: <Share2       size={16} /> },
   ]
 
   const currentTab = TABS.find(t => t.id === view)
@@ -102,6 +105,7 @@ export default function Layout({ view, onNav, children, onNewDay, tasks }: Props
             <h1 className="text-base font-bold text-slate-800 leading-none">{currentTab?.label}</h1>
             <p className="text-[11px] text-slate-400 mt-0.5">{PAGE_SUB[view]}</p>
           </div>
+          <LiveClock />
         </div>
 
         <main className="flex-1 p-5">
