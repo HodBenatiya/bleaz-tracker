@@ -1,4 +1,7 @@
+import { useMemo, useState } from 'react'
 import type { DailyReport, Candidate, SavedPosition } from '../types'
+import { todayISO, toISODate } from '../utils/helpers'
+import { candidateAnchor, isPlacement } from '../utils/candidateAnchor'
 
 interface Props {
   reports:    DailyReport[]
@@ -56,6 +59,24 @@ interface CampaignRow {
   cpl:     number
 }
 
+type RangePreset = 'today' | 'yesterday' | 'week' | 'month' | 'past' | 'custom'
+
+function shiftDays(iso: string, days: number): string {
+  const date = new Date(iso + 'T12:00:00')
+  date.setDate(date.getDate() + days)
+  return toISODate(date)
+}
+
+function monthBounds(year: number, month: number): { start: string; end: string } {
+  const start = `${year}-${String(month).padStart(2, '0')}-01`
+  const end = toISODate(new Date(year, month, 0))
+  return { start, end }
+}
+
+function monthName(year: number, month: number): string {
+  return new Date(year, month - 1, 1).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' })
+}
+
 function buildCampaignRows(reports: DailyReport[]): CampaignRow[] {
   const map: Record<string, { spend: number; leads: number }> = {}
   for (const r of reports) {
@@ -76,29 +97,125 @@ function buildCampaignRows(reports: DailyReport[]): CampaignRow[] {
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function MarketingROI({ reports, candidates, positions }: Props) {
-  const sourceRows   = buildSourceFunnel(candidates)
-  const campaignRows = buildCampaignRows(reports)
+export default function MarketingROI({ reports, candidates }: Props) {
+  const today = todayISO()
+  const [preset, setPreset] = useState<RangePreset>('today')
+  const [pastMonth, setPastMonth] = useState('')
+  const [customStart, setCustomStart] = useState(shiftDays(today, -6))
+  const [customEnd, setCustomEnd] = useState(today)
+
+  const pastMonths = useMemo(() => {
+    const now = new Date()
+    return Array.from({ length: 12 }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - 1 - index, 1)
+      const year = date.getFullYear()
+      const month = date.getMonth() + 1
+      return { key: `${year}-${String(month).padStart(2, '0')}`, year, month, label: monthName(year, month) }
+    })
+  }, [])
+
+  const range = useMemo(() => {
+    if (preset === 'yesterday') {
+      const day = shiftDays(today, -1)
+      return { start: day, end: day, label: 'אתמול' }
+    }
+    if (preset === 'week') return { start: shiftDays(today, -6), end: today, label: '7 ימים אחרונים' }
+    if (preset === 'month') {
+      const now = new Date()
+      return { start: monthBounds(now.getFullYear(), now.getMonth() + 1).start, end: today, label: 'החודש' }
+    }
+    if (preset === 'past' && pastMonth) {
+      const [year, month] = pastMonth.split('-').map(Number)
+      const bounds = monthBounds(year, month)
+      return { ...bounds, label: monthName(year, month) }
+    }
+    if (preset === 'custom') {
+      const start = customStart <= customEnd ? customStart : customEnd
+      const end = customStart <= customEnd ? customEnd : customStart
+      return { start, end, label: `${start} – ${end}` }
+    }
+    return { start: today, end: today, label: 'היום' }
+  }, [preset, pastMonth, customStart, customEnd, today])
+
+  const rangedReports = reports.filter(report => report.date >= range.start && report.date <= range.end)
+  const rangedCandidates = candidates.filter(candidate => {
+    const anchor = candidateAnchor(candidate)
+    return anchor.day >= range.start && anchor.day <= range.end
+  })
+  const fallbackCount = rangedCandidates.filter(candidate => candidateAnchor(candidate).fallback).length
+
+  const sourceRows   = buildSourceFunnel(rangedCandidates)
+  const campaignRows = buildCampaignRows(rangedReports)
 
   const totalSpend   = campaignRows.reduce((s, r) => s + r.spend, 0)
   const totalLeads   = campaignRows.reduce((s, r) => s + r.leads, 0)
-  const totalPlaced  = positions.reduce((s, p) => s + (p.funnelConfirmed || 0), 0)
+  const totalPlaced  = rangedCandidates.filter(isPlacement).length
   const totalRevenue = totalPlaced * PLACEMENT_VALUE
   const totalROI     = totalSpend > 0 ? ((totalRevenue - totalSpend) / totalSpend) * 100 : 0
   const cpl          = totalLeads  > 0 ? totalSpend / totalLeads  : 0
   const cpp          = totalPlaced > 0 ? totalSpend / totalPlaced : 0
 
-  const candTotal    = candidates.length
-  const candPlaced   = candidates.filter(c => c.status === 'placement_complete').length
-  const candRelevant = candidates.filter(c =>
+  const candTotal    = rangedCandidates.length
+  const candPlaced   = rangedCandidates.filter(c => c.status === 'placement_complete').length
+  const candRelevant = rangedCandidates.filter(c =>
     ['relevant','sent_to_client','interview_scheduled','started_working','placement_complete'].includes(c.status)).length
+
+  const presets: { id: RangePreset; label: string }[] = [
+    { id: 'today', label: 'היום' },
+    { id: 'yesterday', label: 'אתמול' },
+    { id: 'week', label: '7 ימים' },
+    { id: 'month', label: 'החודש' },
+  ]
 
   return (
     <div className="space-y-6">
+      <div className="card">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs text-slate-500">{preset === 'today' ? 'הוצאה חיה' : 'הוצאה בטווח'}</p>
+            <p className="text-3xl font-black text-slate-800">₪{totalSpend.toLocaleString('he-IL')}</p>
+            <p className="text-sm text-slate-500 mt-1">{range.label} · {range.start === range.end ? range.start : `${range.start} – ${range.end}`}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {presets.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setPreset(item.id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold ${preset === item.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
+              >
+                {item.label}
+              </button>
+            ))}
+            <select
+              value={preset === 'past' ? pastMonth : ''}
+              onChange={event => {
+                setPastMonth(event.target.value)
+                setPreset('past')
+              }}
+              className="text-xs rounded-full border border-slate-200 px-3 py-1.5 bg-white"
+            >
+              <option value="">חודש מלא…</option>
+              {pastMonths.map(month => <option key={month.key} value={month.key}>{month.label}</option>)}
+            </select>
+            <label className="text-[11px] text-slate-500 flex items-center gap-1">
+              מ
+              <input type="date" value={customStart} onChange={event => { setCustomStart(event.target.value); setPreset('custom') }} className="text-xs border border-slate-200 rounded-lg px-2 py-1" />
+            </label>
+            <label className="text-[11px] text-slate-500 flex items-center gap-1">
+              עד
+              <input type="date" value={customEnd} onChange={event => { setCustomEnd(event.target.value); setPreset('custom') }} className="text-xs border border-slate-200 rounded-lg px-2 py-1" />
+            </label>
+          </div>
+        </div>
+        {fallbackCount > 0 && (
+          <p className="text-[11px] text-amber-700 mt-3">{fallbackCount} מועמדים בלי תאריך יצירה נספרו לפי התאריך המוקדם ביותר שיש להם.</p>
+        )}
+      </div>
 
       {/* ── KPI cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KPI label="סה״כ הוצאה"  value={`₪${totalSpend.toLocaleString()}`}                          sub="כל הקמפיינים"        color="text-slate-700" />
+        <KPI label="הוצאה"  value={`₪${totalSpend.toLocaleString('he-IL')}`}                          sub={range.label}        color="text-slate-700" />
         <KPI label="סה״כ לידים"  value={totalLeads.toLocaleString()}                                  sub="נכנסו מהמודעות"      color="text-blue-600" />
         <KPI label="עלות לליד"   value={cpl > 0 ? `₪${cpl.toFixed(0)}` : '—'}                       sub="CPL"                 color="text-slate-700" />
         <KPI label="הוצבו"        value={totalPlaced.toString()}                                      sub="הצבות מאושרות"       color="text-emerald-600" />
