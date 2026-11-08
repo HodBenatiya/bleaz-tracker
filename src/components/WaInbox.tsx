@@ -3,7 +3,7 @@ import { ArrowRight, Camera, CheckCheck, FileText, Loader2, MapPin, Mic, Papercl
 import type { Candidate, CandidateStatus, SavedPosition, WaInboxLead, WaMessage, WaSessionState } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
-import { buildWaThreads, isIsraeliMobile, latestCv, mergeWaMessages, toLocalPhone, type WaThread } from '../utils/wa'
+import { buildWaThreads, isIsraeliMobile, latestCv, mergeWaMessages, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
   candidates: Candidate[]
@@ -123,6 +123,7 @@ function WaInboxScreen({
   const [assignError, setAssignError] = useState('')
   const [name, setName] = useState('')
   const [city, setCity] = useState('')
+  const [assignNote, setAssignNote] = useState('')
   const [phoneOverride, setPhoneOverride] = useState('')
   const [status, setStatus] = useState<CandidateStatus>('screening')
   const [chosen, setChosen] = useState<string[]>([])
@@ -364,6 +365,8 @@ function WaInboxScreen({
     setStatus(thread.candidate?.status ?? 'screening')
     setName('')
     setCity(thread.candidate?.city ?? '')
+    const history = thread.candidate?.noteHistory ?? []
+    setAssignNote(history.length ? history[history.length - 1].text : (thread.candidate?.notes ?? ''))
     setPhoneOverride('')
     setAssignError('')
     setAssignOpen(true)
@@ -384,6 +387,7 @@ function WaInboxScreen({
     const phone = toLocalPhone(typedPhone || selected.phone) || selected.phone
     const cv = latestCv(selected.messages)
     const displayName = name.trim() || selected.candidate?.name || selected.title
+    const noted = screeningNoteFields(selected.candidate, assignNote, now, crypto.randomUUID())
     let ok = false
     if (selected.candidate) {
       const next: Candidate = {
@@ -392,6 +396,8 @@ function WaInboxScreen({
         city: city.trim() || selected.candidate.city,
         phone,
         status,
+        notes: noted.notes,
+        noteHistory: noted.noteHistory,
         savedPositionIds: chosen,
         savedPositionId: chosen[0],
         positionType: positionType || selected.candidate.positionType,
@@ -416,7 +422,8 @@ function WaInboxScreen({
         savedPositionId: chosen[0],
         savedPositionIds: chosen,
         nonaStatus: '',
-        notes: '',
+        notes: noted.notes,
+        noteHistory: noted.noteHistory,
         waMessages: selected.messages,
         waUnread: 0,
         waChatId: selected.chatId,
@@ -539,15 +546,26 @@ function WaInboxScreen({
             </header>
 
             {assignOpen && (
-              <div className="bg-white border-b border-slate-200 px-4 py-3 space-y-3 shrink-0">
+              <div className="bg-white border-b border-slate-200 px-4 py-3 space-y-3 shrink-0 max-h-[70vh] overflow-y-auto">
                 <div>
                   <p className="font-bold text-slate-800">שיוך שיחה</p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {selected.candidate
-                      ? 'המועמד כבר במערכת. השמירה תעדכן משרות וסטטוס.'
+                      ? 'המועמד כבר במערכת. השמירה תעדכן משרות, סטטוס והערה.'
                       : 'הליד ייכנס לרשימת המועמדים עם היסטוריית השיחה.'}
                   </p>
                 </div>
+                <label className="block">
+                  <span className="text-sm font-bold text-slate-800">הערה</span>
+                  <span className="block text-[11px] text-slate-500 mb-1">פרטי שיחת הסינון. נשמר כמו הערות בכרטיס המועמד.</span>
+                  <textarea
+                    value={assignNote}
+                    onChange={e => setAssignNote(e.target.value)}
+                    rows={8}
+                    placeholder="ניסיון, זמינות, מה עלה בשיחה..."
+                    className="input-field w-full text-sm leading-relaxed min-h-[9.5rem] resize-y"
+                  />
+                </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <label className="text-xs text-slate-500">
                     שם (לא חובה)
