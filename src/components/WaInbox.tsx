@@ -14,6 +14,7 @@ interface Props {
   onCandidatesChange: (next: Candidate[]) => Promise<boolean>
   onPatchCandidate: (next: Candidate) => void
   onPatchInbox: (next: WaInboxLead) => void
+  onRefreshInbox: () => void
 }
 
 const STATUS_ORDER: CandidateStatus[] = [
@@ -103,7 +104,7 @@ export default function WaInbox(props: Props) {
 
 function WaInboxScreen({
   candidates, positions, inbox, session, inboxError,
-  onCandidatesChange, onPatchCandidate, onPatchInbox,
+  onCandidatesChange, onPatchCandidate, onPatchInbox, onRefreshInbox,
 }: Props) {
   const preview = previewOn()
   const shownCandidates = preview && candidates.length === 0 ? previewCandidates() : candidates
@@ -139,6 +140,18 @@ function WaInboxScreen({
   const selected = threads.find(t => t.key === selectedKey) ?? null
   const note = sessionNote(session?.status)
   const tableError = setupError(inboxError)
+
+  useEffect(() => {
+    if (preview) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        await fetch('/api/wa-resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      } catch { /* the next webhook retries any row that is still missing a phone */ }
+      if (!cancelled) onRefreshInbox()
+    })()
+    return () => { cancelled = true }
+  }, [preview, onRefreshInbox])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -363,7 +376,7 @@ function WaInboxScreen({
                   {t.kind === 'lead'
                     ? <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">ליד</span>
                     : <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${t.candidate ? CANDIDATE_STATUS_COLORS[t.candidate.status] : ''}`}>מועמד</span>}
-                  {t.unresolved && <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded mr-1">מספר לא זמין</span>}
+                  {t.unresolved && <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded mr-1">מאתר מספר…</span>}
                 </div>
               </div>
             </button>

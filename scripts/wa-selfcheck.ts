@@ -155,7 +155,7 @@ const lidThreads = buildWaThreads([], [{
 }])
 assert.equal(lidThreads.length, 1)
 assert.equal(lidThreads[0].title, 'יוסי')
-assert.equal(lidThreads[0].phoneLabel, 'מספר לא זמין')
+assert.equal(lidThreads[0].phoneLabel, 'מאתר מספר…')
 
 const own = buildWaThreads([], [{
   id: 'wa_lid82077663920366',

@@ -215,6 +215,15 @@ export default function App() {
     setWaInbox(prev => prev.map(l => l.id === next.id ? next : l))
   }, [])
 
+  const refreshInbox = useCallback(() => {
+    loadWaInbox().then(box => {
+      if (box.error) return
+      setWaInbox(box.rows)
+      setWaSession(box.session)
+      setWaInboxError(null)
+    })
+  }, [])
+
   const waUnread = (candidates ?? []).reduce((sum, c) => sum + (c?.waUnread ?? 0), 0)
     + (waInbox ?? []).reduce((sum, lead) => sum + (!lead || lead.candidateId ? 0 : (lead.unread ?? 0)), 0)
 
@@ -274,6 +283,7 @@ export default function App() {
           onCandidatesChange={handleCandidatesChange}
           onPatchCandidate={patchCandidate}
           onPatchInbox={patchInboxLead}
+          onRefreshInbox={refreshInbox}
         />
       )}
     </Layout>

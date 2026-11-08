@@ -57,22 +57,56 @@ function wahaCreds() {
   }
 }
 
-/** GET /api/{session}/lids/{lid} → { pn }. pn may be null when WAHA has no mapping. */
-export async function resolveWahaLid(lid: string, session?: string): Promise<string | null> {
+function wahaHeaders(key: string): Record<string, string> {
+  return { Accept: 'application/json', ...(key ? { 'X-Api-Key': key } : {}) }
+}
+
+async function lookupLidOnce(base: string, key: string, session: string, id: string): Promise<string | null> {
+  const url = `${base}/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(id)}`
+  const resp = await fetch(url, { headers: wahaHeaders(key), signal: AbortSignal.timeout(8000) })
+  if (!resp.ok) return null
+  const data = await resp.json().catch(() => null) as { pn?: string | null } | null
+  return typeof data?.pn === 'string' && data.pn ? data.pn : null
+}
+
+function phoneFromContact(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  const row = data as Record<string, unknown>
+  for (const field of ['pn', 'number', 'phone', 'phoneNumber']) {
+    const value = row[field]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  if (typeof row.id === 'string' && row.id.endsWith('@c.us')) return row.id
+  return ''
+}
+
+async function lookupContactPhone(base: string, key: string, session: string, id: string): Promise<string | null> {
+  const contactId = `${id}@lid`
+  const url = `${base}/api/${encodeURIComponent(session)}/contacts?contactId=${encodeURIComponent(contactId)}`
+  const resp = await fetch(url, { headers: wahaHeaders(key), signal: AbortSignal.timeout(8000) })
+  if (!resp.ok) return null
+  const data = await resp.json().catch(() => null)
+  const phone = phoneFromContact(data)
+  return phone || null
+}
+
+/**
+ * Resolve a LID to a phone JID.
+ * GET /api/{session}/lids/{lid}, retry once after a short delay, then GET /api/{session}/contacts?contactId=.
+ */
+export async function resolveWahaPhone(lid: string, session?: string): Promise<string | null> {
   let creds: { base: string; key: string; session: string }
   try { creds = wahaCreds() } catch { return null }
   const id = lid.replace(/@lid$/i, '')
   if (!id) return null
   const useSession = session || creds.session
-  const url = `${creds.base}/api/${encodeURIComponent(useSession)}/lids/${encodeURIComponent(id)}`
   try {
-    const resp = await fetch(url, {
-      headers: { Accept: 'application/json', ...(creds.key ? { 'X-Api-Key': creds.key } : {}) },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!resp.ok) return null
-    const data = await resp.json().catch(() => null) as { pn?: string | null } | null
-    return typeof data?.pn === 'string' && data.pn ? data.pn : null
+    const first = await lookupLidOnce(creds.base, creds.key, useSession, id)
+    if (first) return first
+    await new Promise(resolve => setTimeout(resolve, 600))
+    const second = await lookupLidOnce(creds.base, creds.key, useSession, id)
+    if (second) return second
+    return await lookupContactPhone(creds.base, creds.key, useSession, id)
   } catch (err) {
     console.error('lid lookup', redactError(err))
     return null

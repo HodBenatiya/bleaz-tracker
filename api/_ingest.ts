@@ -14,7 +14,7 @@ import {
 } from '../src/utils/wa.js'
 import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse.js'
 import { db } from './_db.js'
-import { downloadIncomingMedia, providerName, redactError, resolveWahaLid } from './_provider.js'
+import { downloadIncomingMedia, providerName, redactError, resolveWahaPhone } from './_provider.js'
 import { captureTaskCommand } from './_tasks.js'
 
 interface CandidateRow { id: string; data: Candidate }
@@ -298,7 +298,7 @@ async function resolveIncoming(message: ParsedMessage, session?: string): Promis
   let phoneJid = message.phoneJid
   const lid = message.lid || (message.chatId.endsWith('@lid') ? message.chatId : undefined)
   if (!phoneJid && lid && message.source !== 'greenapi') {
-    const pn = await resolveWahaLid(lid, session)
+    const pn = await resolveWahaPhone(lid, session)
     if (pn) phoneJid = pn.includes('@') ? pn.replace('@s.whatsapp.net', '@c.us') : toWhatsAppChatId(pn)
   }
   const resolved = applyKnownLid({ chatId: message.chatId, lid, phoneJid })
@@ -312,12 +312,11 @@ function tagWaha(messages: WaMessage[] | undefined): WaMessage[] {
 
 /** Move LID-keyed inbox rows onto the real 05X phone once WAHA can resolve them. The LID row is kept and marked mergedInto. */
 export async function repairLidInbox(session?: string): Promise<number> {
-  const { data, error } = await db().from('wa_inbox').select('id, data').limit(200)
+  const { data, error } = await db().from('wa_inbox').select('id, data').limit(500)
   if (error) throw new Error(error.message)
   let fixed = 0
-  let looked = 0
+  let lookups = 0
   for (const row of data ?? []) {
-    if (looked >= 25) break
     if (row.id === 'wa_session') continue
     const lead = row.data as WaInboxLead
     if (!lead || lead.mergedInto || lead.provider === 'greenapi') continue
@@ -325,19 +324,25 @@ export async function repairLidInbox(session?: string): Promise<number> {
       || (String(lead.chatId || '').endsWith('@lid') ? lead.chatId : '')
       || (looksLikeWaLid(lead.phone) ? `${String(lead.phone).replace(/\D/g, '')}@lid` : '')
     if (!lid || !looksLikeWaLid(lid) || isOwnWaIdentity(lid)) continue
-    looked++
-    let phoneJid = lead.phone && !looksLikeWaLid(lead.phone) ? toWhatsAppChatId(lead.phone) : ''
+    const hasPhone = !!lead.phone && !looksLikeWaLid(lead.phone)
+    if (hasPhone && lead.phoneUnresolved === false && lead.provider === 'waha' && !String(row.id).includes('lid') && !String(lead.chatId || '').endsWith('@lid')) continue
+    if (!hasPhone && lookups >= 8) continue
+    let phoneJid = hasPhone ? toWhatsAppChatId(lead.phone) : ''
     if (!phoneJid) {
-      const pn = await resolveWahaLid(lid, session)
+      lookups++
+      const pn = await resolveWahaPhone(lid, session)
       if (pn) phoneJid = pn.includes('@') ? pn.replace('@s.whatsapp.net', '@c.us') : toWhatsAppChatId(pn)
     }
     const now = new Date().toISOString()
     const tagged = tagWaha(lead.messages)
     if (!phoneJid || isOwnWaIdentity(phoneJid)) {
-      await writeInbox(String(row.id), {
-        ...lead, phone: '', phoneUnresolved: true, lid, provider: 'waha', messages: tagged, updatedAt: now,
-      }, now)
-      fixed++
+      const alreadyWaiting = lead.phoneUnresolved && !lead.phone && lead.provider === 'waha' && lead.lid === lid
+      if (!alreadyWaiting) {
+        await writeInbox(String(row.id), {
+          ...lead, phone: '', phoneUnresolved: true, lid, provider: 'waha', messages: tagged, updatedAt: now,
+        }, now)
+        fixed++
+      }
       continue
     }
     const phone = toLocalPhone(phoneJid)
