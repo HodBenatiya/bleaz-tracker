@@ -245,6 +245,7 @@ export interface WaMessage {
   fileName?: string
   mimeType?: string
   fileUrl?: string
+  filePath?: string
   caption?: string
   senderName?: string
   status?: WaDeliveryStatus

@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js'
 import type { Candidate, WaDeliveryStatus, WaInboxLead, WaMessage, WaSessionState } from '../src/types/index.js'
 import {
   applyKnownLid,
@@ -35,7 +36,8 @@ function sameThread(candidate: Candidate, chatId: string, lid?: string): boolean
   return false
 }
 
-function toWaMessage(parsed: ParsedMessage, fileUrl?: string): WaMessage {
+function toWaMessage(parsed: ParsedMessage, file?: { fileUrl?: string; filePath?: string }): WaMessage {
+  const hasFile = !!(parsed.hasMedia || file?.fileUrl || file?.filePath)
   return {
     id: parsed.id,
     direction: parsed.direction,
@@ -44,7 +46,8 @@ function toWaMessage(parsed: ParsedMessage, fileUrl?: string): WaMessage {
     type: parsed.type,
     fileName: parsed.fileName,
     mimeType: parsed.mimeType,
-    fileUrl,
+    fileUrl: hasFile ? (file?.fileUrl || `/api/wa-media?id=${encodeURIComponent(parsed.id)}`) : undefined,
+    filePath: file?.filePath,
     senderName: parsed.senderName,
     status: parsed.direction === 'out' ? 'sent' : undefined,
     source: parsed.source || (providerName() === 'waha' ? 'waha' : 'greenapi'),
@@ -196,19 +199,60 @@ function safeStorageName(name: string): string {
   return (cleaned || 'file').slice(-80)
 }
 
-async function uploadToCvs(chatId: string, fileName: string, bytes: Uint8Array, mime: string): Promise<string | null> {
+function storageClient() {
+  const url = process.env.VITE_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+  if (!url || !key) throw new Error('missing supabase env')
+  return createClient(url, key)
+}
+
+export async function uploadWaFile(chatId: string, fileName: string, bytes: Uint8Array, mime: string): Promise<string | null> {
   const key = threadKeyFromChat(chatId) || 'file'
   const path = `whatsapp/${key}/${Date.now()}-${safeStorageName(fileName)}`
-  const { error } = await db().storage.from('cvs').upload(path, bytes, {
-    contentType: mime || 'application/octet-stream',
-    upsert: true,
-  })
-  if (error) {
-    console.error('cvs upload', error.message)
+  const client = storageClient()
+  const body = bytes
+  const options = { contentType: mime || 'application/octet-stream', upsert: true }
+  const preferred = await client.storage.from('wa-media').upload(path, body, options)
+  if (!preferred.error) return `wa-media:${path}`
+  console.error('wa-media upload', preferred.error.message)
+  const fallback = await client.storage.from('cvs').upload(path, body, options)
+  if (fallback.error) {
+    console.error('cvs upload', fallback.error.message)
     return null
   }
-  const { data } = db().storage.from('cvs').getPublicUrl(path)
-  return data.publicUrl || null
+  return `cvs:${path}`
+}
+
+export async function openStoredMedia(filePath: string): Promise<string | null> {
+  const splitAt = filePath.indexOf(':')
+  if (splitAt <= 0) return null
+  const bucket = filePath.slice(0, splitAt)
+  const path = filePath.slice(splitAt + 1)
+  const client = storageClient()
+  if (bucket === 'cvs') {
+    const { data } = client.storage.from('cvs').getPublicUrl(path)
+    return data.publicUrl || null
+  }
+  const { data, error } = await client.storage.from(bucket).createSignedUrl(path, 60 * 60)
+  if (error || !data?.signedUrl) return null
+  return data.signedUrl
+}
+
+export async function findStoredMedia(id: string): Promise<{ filePath?: string; fileUrl?: string; fileName?: string; mimeType?: string; chatId?: string; type?: string } | null> {
+  const { data, error } = await db().from('wa_inbox').select('data').limit(500)
+  if (!error) {
+    for (const row of data ?? []) {
+      const lead = row.data as WaInboxLead | undefined
+      const message = (lead?.messages ?? []).find(m => m?.id === id || messageKey(m?.id) === messageKey(id))
+      if (message) return { ...message, chatId: lead?.chatId }
+    }
+  }
+  const rows = await loadCandidateRows()
+  for (const row of rows) {
+    const message = (row.data?.waMessages ?? []).find(m => m?.id === id || messageKey(m?.id) === messageKey(id))
+    if (message) return { ...message, chatId: row.data.waChatId || row.data.waLid }
+  }
+  return null
 }
 
 async function storeSession(status: string): Promise<void> {
@@ -264,13 +308,13 @@ async function applyAck(chatId: string, id: string, status: WaDeliveryStatus): P
 async function attachMediaIfMissing(incoming: ParsedMessage): Promise<void> {
   const file = await downloadIncomingMedia(incoming)
   if (!file) return
-  const fileUrl = await uploadToCvs(incoming.chatId, incoming.fileName || incoming.type, file.bytes, file.mime)
-  if (!fileUrl) return
+  const filePath = await uploadWaFile(incoming.chatId, incoming.fileName || incoming.type, file.bytes, file.mime)
+  const fileUrl = `/api/wa-media?id=${encodeURIComponent(incoming.id)}`
   const rows = await loadCandidateRows()
   const found = rows.find(r => (r.data?.waMessages ?? []).some(m => m.id === incoming.id))
   if (found) {
     const messages = (found.data.waMessages ?? []).map(m => m.id === incoming.id && !m.fileUrl
-      ? { ...m, fileUrl, fileName: m.fileName || incoming.fileName, mimeType: m.mimeType || incoming.mimeType }
+      ? { ...m, fileUrl, filePath: filePath || m.filePath, fileName: m.fileName || incoming.fileName, mimeType: m.mimeType || incoming.mimeType }
       : m)
     const attachCv = !found.data.cvUrl && looksLikeCv(incoming.fileName, incoming.mimeType)
     await writeCandidate(found.id, {
@@ -288,7 +332,7 @@ async function attachMediaIfMissing(incoming: ParsedMessage): Promise<void> {
   const next: WaInboxLead = {
     ...lead,
     messages: (lead.messages ?? []).map(m => m.id === incoming.id && !m.fileUrl
-      ? { ...m, fileUrl, fileName: m.fileName || incoming.fileName, mimeType: m.mimeType || incoming.mimeType }
+      ? { ...m, fileUrl, filePath: filePath || m.filePath, fileName: m.fileName || incoming.fileName, mimeType: m.mimeType || incoming.mimeType }
       : m),
     updatedAt: new Date().toISOString(),
   }
@@ -479,15 +523,14 @@ export async function ingestWebhookBody(
     return { action: 'duplicate' }
   }
 
-  let fileUrl: string | undefined
+  let stored: { fileUrl?: string; filePath?: string } | undefined
   if (opts?.downloadFiles !== false && (incoming.downloadUrl || incoming.hasMedia)) {
     const file = await downloadIncomingMedia(incoming)
-    if (file) {
-      fileUrl = await uploadToCvs(incoming.chatId, incoming.fileName || incoming.type, file.bytes, file.mime) || undefined
-    }
+    const filePath = file ? await uploadWaFile(incoming.chatId, incoming.fileName || `${incoming.type}.bin`, file.bytes, file.mime) : null
+    stored = { fileUrl: `/api/wa-media?id=${encodeURIComponent(incoming.id)}`, filePath: filePath || undefined }
   }
 
-  const message = toWaMessage(incoming, fileUrl)
+  const message = toWaMessage(incoming, stored)
   const rows = await loadCandidateRows()
   const found = rows.find(r => sameThread(r.data, incoming.chatId, incoming.lid))
   if (found) {
