@@ -8,6 +8,7 @@
     "api/apply.ts":           { "maxDuration": 10 },
     "api/wa-webhook.ts":      { "maxDuration": 15 },
     "api/wa-send.ts":         { "maxDuration": 15 },
-    "api/wa-resolve.ts":      { "maxDuration": 15 }
+    "api/wa-resolve.ts":      { "maxDuration": 15 },
+    "api/match-candidates.ts": { "maxDuration": 30 }
   }
 }

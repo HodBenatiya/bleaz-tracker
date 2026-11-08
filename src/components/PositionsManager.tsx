@@ -3,6 +3,7 @@ import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, Ch
 import type { SavedPosition, Candidate, CandidateStatus } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import { generateId, formatCurrency, calcCostPerLead } from '../utils/helpers'
+import MatchCandidatesButton from './MatchCandidatesPanel'
 
 interface Props {
   positions:  SavedPosition[]
@@ -229,6 +230,7 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                       {revenue > 0 && <span className="text-violet-700 font-medium">{formatCurrency(revenue)}</span>}
                     </div>
                     <div className="flex items-center gap-1">
+                      <MatchCandidatesButton jobId={pos.id} />
                       {/* לינק ללקוח */}
                       <button
                         onClick={e => handleCopyLink(e, pos)}

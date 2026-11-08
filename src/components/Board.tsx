@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { ChevronRight, ChevronLeft } from 'lucide-react'
 import { Candidate, SavedPosition, CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
+import MatchCandidatesButton from './MatchCandidatesPanel'
 
 interface Props {
   positions: SavedPosition[]
@@ -216,6 +217,7 @@ export default function Board({ positions, candidates }: Props) {
 
                   {/* מספרי פאנל */}
                   <div className="flex items-center gap-1 shrink-0 mr-4">
+                    <MatchCandidatesButton jobId={pos.id} />
                     {[
                       { label: 'מאגר',   val: total,      bg: 'bg-slate-100 text-slate-700' },
                       { label: 'נשלחו',  val: sent,       bg: 'bg-blue-100 text-blue-700' },
