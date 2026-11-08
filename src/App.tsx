@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { View, DailyReport, SavedPosition, PipelineCompany, Task, Candidate } from './types'
+import type { View, DailyReport, SavedPosition, PipelineCompany, Task, Candidate, WaInboxLead, WaSessionState } from './types'
 import {
   loadReports, upsertReport, deleteReport,
   loadPositions, savePositions,
   loadPipeline,  savePipeline,
   loadTasks,     saveTasks,
   loadCandidates, upsertCandidate, deleteCandidate,
+  loadWaInbox,
   migrateFromLocalStorage,
 } from './utils/storage'
+import { stampStatusChange } from './utils/wa'
 import { supabase } from './utils/supabase'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
@@ -22,6 +24,7 @@ import DataView from './components/DataView'
 import Board from './components/Board'
 import Management from './components/Management'
 import MetaPage from './components/MetaPage'
+import WaInbox from './components/WaInbox'
 
 // ── Local upsert helper (keeps state consistent before DB responds) ──
 function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[] {
@@ -39,6 +42,9 @@ export default function App() {
   const [pipeline,      setPipeline]      = useState<PipelineCompany[]>([])
   const [tasks,         setTasks]         = useState<Task[]>([])
   const [candidates,    setCandidates]    = useState<Candidate[]>([])
+  const [waInbox,       setWaInbox]       = useState<WaInboxLead[]>([])
+  const [waSession,     setWaSession]     = useState<WaSessionState | null>(null)
+  const [waInboxError,  setWaInboxError]  = useState<string | null>(null)
   const [editingReport, setEditingReport] = useState<DailyReport | null>(null)
   const [loading,       setLoading]       = useState(true)
 
@@ -46,8 +52,8 @@ export default function App() {
   useEffect(() => {
     async function init() {
       setLoading(true)
-      const [r, p, pl, t, c] = await Promise.all([
-        loadReports(), loadPositions(), loadPipeline(), loadTasks(), loadCandidates(),
+      const [r, p, pl, t, c, box] = await Promise.all([
+        loadReports(), loadPositions(), loadPipeline(), loadTasks(), loadCandidates(), loadWaInbox(),
       ])
 
       if (r.length === 0 && p.length === 0 && pl.length === 0 && t.length === 0) {
@@ -64,6 +70,9 @@ export default function App() {
         setTasks(t)
       }
       setCandidates(c)
+      setWaInbox(box.rows)
+      setWaSession(box.session)
+      setWaInboxError(box.error)
       setLoading(false)
     }
     init()
@@ -111,7 +120,21 @@ export default function App() {
 
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
+    const waChannel = supabase.channel('bleaz-wa-inbox')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_inbox' }, () => {
+        loadWaInbox().then(box => {
+          if (box.error) return
+          setWaInbox(box.rows)
+          setWaSession(box.session)
+          setWaInboxError(null)
+        })
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+      supabase.removeChannel(waChannel)
+    }
   }, [])
 
   // ── Handlers ──
@@ -144,27 +167,56 @@ export default function App() {
     saveTasks(newTasks)
   }, [])
 
-  const handleCandidatesChange = useCallback(async (newCandidates: Candidate[]) => {
+  const handleCandidatesChange = useCallback(async (newCandidates: Candidate[]): Promise<boolean> => {
+    const prevById = new Map(candidates.map(c => [c.id, c]))
     const prevIds = candidates.map(c => c.id)
-    const newIds  = newCandidates.map(c => c.id)
+    // היסטוריית סטטוס נכתבת רק כאן, לכל שינוי סטטוס שמגיע מהמסכים.
+    const stamped = newCandidates.map(nc => stampStatusChange(prevById.get(nc.id), nc))
+    const newIds  = stamped.map(c => c.id)
 
     // שמור רק מועמדים שבאמת השתנו — מונע דריסת שינויים של השותף
-    const changed = newCandidates.filter(nc => {
-      const prev = candidates.find(c => c.id === nc.id)
+    const changed = stamped.filter(nc => {
+      const prev = prevById.get(nc.id)
       if (!prev) return true
       return JSON.stringify(prev) !== JSON.stringify(nc)
     })
     const removed = prevIds.filter(id => !newIds.includes(id))
 
     try {
-      if (changed.length > 0)  await Promise.all(changed.map(c => upsertCandidate(c)))
+      const saved = changed.length > 0 ? await Promise.all(changed.map(c => upsertCandidate(c))) : []
       if (removed.length > 0)  await Promise.all(removed.map(id => deleteCandidate(id)))
-      setCandidates(newCandidates)
+      const savedById = new Map(saved.map(c => [c.id, c]))
+      setCandidates(stamped.map(c => savedById.get(c.id) ?? c))
+      return true
     } catch (err) {
       console.error('שגיאה בשמירת מועמד:', err)
       alert('שגיאה בשמירה: ' + (err instanceof Error ? err.message : 'נסה שוב'))
+      return false
     }
   }, [candidates])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadWaInbox().then(box => {
+        if (box.error) return
+        setWaInbox(box.rows)
+        setWaSession(box.session)
+        setWaInboxError(null)
+      })
+    }, 8000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const patchCandidate = useCallback((next: Candidate) => {
+    setCandidates(prev => prev.map(c => c.id === next.id ? next : c))
+  }, [])
+
+  const patchInboxLead = useCallback((next: WaInboxLead) => {
+    setWaInbox(prev => prev.map(l => l.id === next.id ? next : l))
+  }, [])
+
+  const waUnread = candidates.reduce((sum, c) => sum + (c.waUnread ?? 0), 0)
+    + waInbox.reduce((sum, lead) => sum + (lead.candidateId ? 0 : (lead.unread ?? 0)), 0)
 
   // ── Loading screen ──
   if (loading) {
@@ -179,7 +231,7 @@ export default function App() {
   }
 
   return (
-    <Layout view={view} onNav={handleNav} onNewDay={handleNewDay} tasks={tasks}>
+    <Layout view={view} onNav={handleNav} onNewDay={handleNewDay} tasks={tasks} waUnread={waUnread}>
       {view === 'dashboard' && (
         <Dashboard
           reports={reports}
@@ -212,6 +264,18 @@ export default function App() {
       {view === 'board'      && <Board positions={positions} candidates={candidates} />}
       {view === 'management' && <Management candidates={candidates} positions={positions} reports={reports} onCandidatesChange={handleCandidatesChange} />}
       {view === 'meta'       && <MetaPage savedPositions={positions} reports={reports} onSave={handleSave} />}
+      {view === 'whatsapp'   && (
+        <WaInbox
+          candidates={candidates}
+          positions={positions}
+          inbox={waInbox}
+          session={waSession}
+          inboxError={waInboxError}
+          onCandidatesChange={handleCandidatesChange}
+          onPatchCandidate={patchCandidate}
+          onPatchInbox={patchInboxLead}
+        />
+      )}
     </Layout>
   )
 }

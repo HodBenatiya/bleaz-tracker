@@ -5,6 +5,8 @@
     "api/client/[token].ts":  { "maxDuration": 10 },
     "api/weekly-summary.ts":  { "maxDuration": 15 },
     "api/meta-leads.ts":      { "maxDuration": 15 },
-    "api/apply.ts":           { "maxDuration": 10 }
+    "api/apply.ts":           { "maxDuration": 10 },
+    "api/wa-webhook.ts":      { "maxDuration": 15 },
+    "api/wa-send.ts":         { "maxDuration": 15 }
   }
 }

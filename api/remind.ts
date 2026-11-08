@@ -1,4 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
+import { ingestWebhookBody } from './_ingest'
+import { drainGreenInbox, sendNotify } from './_provider'
+import { captureTaskCommand } from './_tasks'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL!,
@@ -11,22 +14,6 @@ function greenBase() {
   const serverNum  = instanceId.slice(0, 4)
   const apiBase    = (process.env.GREENAPI_API_URL ?? `https://${serverNum}.api.greenapi.com`).replace(/\/$/, '')
   return { instanceId, apiBase, token: process.env.GREENAPI_API_TOKEN! }
-}
-
-async function sendWhatsAppTo(phone: string, msg: string) {
-  const { instanceId, apiBase, token } = greenBase()
-  const clean = phone.replace(/\D/g, '')
-  if (!clean) return
-  await fetch(`${apiBase}/waInstance${instanceId}/sendMessage/${token}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chatId: `${clean}@c.us`, message: msg }),
-  })
-}
-
-async function sendWhatsApp(msg: string) {
-  const phone = process.env.REMINDER_PHONE ?? ''
-  await sendWhatsAppTo(phone, msg)
 }
 
 // ── Timing ───────────────────────────────────────────────────────────────────
@@ -42,83 +29,11 @@ function toMs(date: string, time: string) {
   return new Date(`${date}T${time}:00+03:00`).getTime()
 }
 
-// ── Message parsing ──────────────────────────────────────────────────────────
-function israelNow() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }))
-}
-
-function parseDateTime(text: string): { date: string; time: string } | null {
-  const timeMatch = text.match(/(\d{1,2})[:.ׂ](\d{2})/)
-  if (!timeMatch) return null
-  const time = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`
-
-  const now = israelNow()
-  let target = new Date(now)
-
-  if (/מחרתיים/.test(text))      target.setDate(target.getDate() + 2)
-  else if (/מחר/.test(text))     target.setDate(target.getDate() + 1)
-  else if (/היום|עכשיו/.test(text)) { /* stay today */ }
-  else {
-    const hebrewDays = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת']
-    const jsDay      = [0,1,2,3,4,5,6]
-    let matched = false
-    for (let i = 0; i < hebrewDays.length; i++) {
-      if (text.includes(hebrewDays[i])) {
-        const diff = ((jsDay[i] - now.getDay()) + 7) % 7 || 7
-        target.setDate(target.getDate() + diff)
-        matched = true; break
-      }
-    }
-    if (!matched) {
-      const dm = text.match(/(\d{1,2})\/(\d{1,2})/)
-      if (dm) {
-        target = new Date(now.getFullYear(), parseInt(dm[2]) - 1, parseInt(dm[1]))
-        if (target < now) target.setFullYear(now.getFullYear() + 1)
-      }
-    }
-  }
-
-  const yyyy = target.getFullYear()
-  const mm   = String(target.getMonth() + 1).padStart(2, '0')
-  const dd   = String(target.getDate()).padStart(2, '0')
-  return { date: `${yyyy}-${mm}-${dd}`, time }
-}
-
-function extractTitle(raw: string): string {
-  return raw
-    .replace(/(\d{1,2})[:.ׂ](\d{2})/g, '')
-    .replace(/מחרתיים|מחר|היום|עכשיו/g, '')
-    .replace(/ביום (ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/g, '')
-    .replace(/\d{1,2}\/\d{1,2}/g, '')
-    .replace(/\bב-|\bל-|\bבשעה\b|\bבשע'\b/g, '')
-    .replace(/\s+/g, ' ').trim()
-    .replace(/^[:\-,\s]+|[:\-,\s]+$/g, '').trim()
-}
-
-const TRIGGERS = [
-  /להוסיף למערכת[:\s]+(.+)/i,
-  /הוסיפי למערכת[:\s]+(.+)/i,
-  /הוסף למערכת[:\s]+(.+)/i,
-  /^משימה[:\s]+(.+)/i,
-  /^פגישה[:\s]+(.+)/i,
-  /^תזכורת[:\s]+(.+)/i,
-]
-
-function parseMessage(text: string): { title: string; datetime: { date: string; time: string } | null } | null {
-  for (const re of TRIGGERS) {
-    const m = text.match(re)
-    if (m) {
-      const content  = m[1].trim()
-      const datetime = parseDateTime(content)
-      const title    = extractTitle(content)
-      return { title: title || content, datetime }
-    }
-  }
-  return null
-}
-
 // ── Poll Green API for incoming messages ─────────────────────────────────────
 async function pollMessages(): Promise<{ processed: number; skipped: number }> {
+  if (!process.env.GREENAPI_ID_INSTANCE || !process.env.GREENAPI_API_TOKEN) {
+    return { processed: 0, skipped: 0 }
+  }
   const { instanceId, apiBase, token } = greenBase()
   const receiveUrl = `${apiBase}/waInstance${instanceId}/receiveNotification/${token}`
   const deleteUrl  = (id: number) => `${apiBase}/waInstance${instanceId}/deleteNotification/${token}/${id}`
@@ -143,39 +58,29 @@ async function pollMessages(): Promise<{ processed: number; skipped: number }> {
       body?.messageData?.textMessageData?.textMessage ??
       body?.messageData?.extendedTextMessageData?.text ?? ''
 
-    // מחק תמיד מהתור (גם אם לא עיבדנו)
+    // שומרים כל שיחה לפני המחיקה מהתור, כדי שפקודת משימה לא תמחק ליד.
+    try { await ingestWebhookBody(body, { downloadFiles: false, captureTasks: false }) }
+    catch (err) { console.error('ingestWaEvent', err) }
+
     try { await fetch(deleteUrl(receiptId), { method: 'DELETE' }) } catch {}
 
     if (!text) { skipped++; continue }
-
-    const parsed = parseMessage(text)
-    if (!parsed) { skipped++; continue }
-
-    const { title, datetime } = parsed
-    const now = new Date().toISOString()
-    const task = {
-      id:           `task_wa_${Date.now()}_${i}`,
-      title,
-      assignee:     'hod' as const,
-      priority:     'medium' as const,
-      dueDate:      datetime?.date ?? israelNow().toISOString().split('T')[0],
-      dueTime:      datetime?.time,
-      done:         false,
-      reminderSent: false,
-      source:       'whatsapp' as const,
-      createdAt:    now,
-      updatedAt:    now,
+    try {
+      const created = await captureTaskCommand(text)
+      if (created) processed++
+      else skipped++
+    } catch (err) {
+      console.error('captureTaskCommand', err)
+      skipped++
     }
+  }
 
-    const { error } = await supabase.from('tasks').upsert({ id: task.id, data: task })
-
-    if (!error) {
-      const timeStr = datetime
-        ? `📅 ${datetime.date} ⏰ ${datetime.time}`
-        : '📅 ללא תאריך — עדכני במערכת'
-      await sendWhatsApp(`✅ נוסף למערכת!\n📌 ${title}\n${timeStr}`)
-      processed++
-    }
+  try {
+    await drainGreenInbox(async body => {
+      await ingestWebhookBody(body, { downloadFiles: false, captureTasks: false })
+    })
+  } catch (err) {
+    console.error('drainGreenInbox', err)
   }
 
   return { processed, skipped }
@@ -241,10 +146,10 @@ export default async function handler(req: any, res: any) {
         `בהצלחה! 🍀`,
       ].join('\n')
 
-      await sendWhatsAppTo(c.phone, candidateMsg)
+      await sendNotify(c.phone, candidateMsg)
 
       // אישור לעצמך
-      await sendWhatsApp(`✅ נשלחה תזכורת ראיון\n👤 ${c.name} · ${c.phone}\n🕐 ${c.interviewTime} · ${companyName}`)
+      await sendNotify(process.env.REMINDER_PHONE ?? '', `✅ נשלחה תזכורת ראיון\n👤 ${c.name} · ${c.phone}\n🕐 ${c.interviewTime} · ${companyName}`)
 
       // שולף גרסה עדכנית לפני הכתיבה — מונע דריסת שינויים שנעשו בינתיים
       const { data: freshRow } = await supabase
@@ -279,7 +184,7 @@ export default async function handler(req: any, res: any) {
         `🕐 ${t.dueTime}`,
       ].filter(Boolean).join('\n')
 
-      await sendWhatsApp(msg)
+      await sendNotify(process.env.REMINDER_PHONE ?? '', msg)
       await supabase.from('tasks').upsert({ id: t._rowId, data: { ...t, reminderSent: true } })
       results.tasks.push({ title: t.title, status: 'sent' })
     } catch (err) {

@@ -1,5 +1,5 @@
 import React from 'react'
-import { BarChart2, ClipboardList, History, Briefcase, GitBranch, CheckSquare, Users, TrendingUp, Database, LayoutDashboard, LineChart, Share2 } from 'lucide-react'
+import { BarChart2, ClipboardList, History, Briefcase, GitBranch, CheckSquare, Users, TrendingUp, Database, LayoutDashboard, LineChart, Share2, MessageCircle } from 'lucide-react'
 import type { View, Task } from '../types'
 import LiveClock from './LiveClock'
 
@@ -9,6 +9,7 @@ interface Props {
   children: React.ReactNode
   onNewDay: () => void
   tasks:    Task[]
+  waUnread?: number
 }
 
 const PAGE_SUB: Record<View, string> = {
@@ -24,11 +25,12 @@ const PAGE_SUB: Record<View, string> = {
   board:      'מצב עדכני לפי משרה — כל הנתונים בזמן אמת',
   management: 'KPIs חודשיים, יעדים, גבייה, אחריות ורווחיות',
   meta:       'סנכרון מ-Meta Ads Manager וייבוא CSV',
+  whatsapp:   'שיחות נכנסות מהמספר העסקי — לידים ומועמדים',
 }
 
 const SIDEBAR_W = 'w-52' // 208px
 
-export default function Layout({ view, onNav, children, onNewDay, tasks }: Props) {
+export default function Layout({ view, onNav, children, onNewDay, tasks, waUnread = 0 }: Props) {
   const today       = new Date().toISOString().split('T')[0]
   const openTasks   = tasks.filter(t => !t.done)
   const urgentCount = openTasks.filter(t => t.dueDate <= today).length
@@ -38,6 +40,7 @@ export default function Layout({ view, onNav, children, onNewDay, tasks }: Props
     { id: 'dashboard',  label: 'דשבורד',     icon: <BarChart2    size={16} /> },
     { id: 'board',      label: 'לוח בקרה',  icon: <LayoutDashboard size={16} /> },
     { id: 'candidates', label: 'מועמדים',    icon: <Users        size={16} /> },
+    { id: 'whatsapp',   label: 'וואטסאפ',    icon: <MessageCircle size={16} />, badge: waUnread > 99 ? 99 : waUnread },
     { id: 'data',       label: 'דאטה',       icon: <Database     size={16} /> },
     { id: 'positions',  label: 'משרות',      icon: <Briefcase    size={16} /> },
     { id: 'marketing',  label: 'שיווק ROI',  icon: <TrendingUp   size={16} /> },
@@ -96,10 +99,10 @@ export default function Layout({ view, onNav, children, onNewDay, tasks }: Props
       </aside>
 
       {/* ── Main content (shifted left of sidebar) ── */}
-      <div className={`flex-1 mr-52 min-h-screen flex flex-col`}>
+      <div className={`flex-1 mr-52 flex flex-col ${view === 'whatsapp' ? 'h-screen overflow-hidden' : 'min-h-screen'}`}>
 
         {/* Slim top bar — page title only */}
-        <div className="bg-white border-b border-slate-200 px-6 py-3.5 sticky top-0 z-40 flex items-center gap-3">
+        <div className="bg-white border-b border-slate-200 px-6 py-3.5 sticky top-0 z-40 flex items-center gap-3 shrink-0">
           <div className="text-slate-400">{currentTab?.icon}</div>
           <div>
             <h1 className="text-base font-bold text-slate-800 leading-none">{currentTab?.label}</h1>
@@ -108,7 +111,7 @@ export default function Layout({ view, onNav, children, onNewDay, tasks }: Props
           <LiveClock />
         </div>
 
-        <main className="flex-1 p-5">
+        <main className={view === 'whatsapp' ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1 p-5'}>
           {children}
         </main>
       </div>

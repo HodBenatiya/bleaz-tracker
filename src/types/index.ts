@@ -222,7 +222,62 @@ export interface Candidate {
   paidDate?: string         // תאריך קבלת תשלום (YYYY-MM-DD)
   createdAt: string
   updatedAt: string
+
+  // ── וואטסאפ ──
+  waMessages?: WaMessage[]
+  waUnread?: number
+  waChatId?: string          // 9725XXXXXXXX@c.us or ...@lid
+  lastWaAt?: string
+  statusHistory?: StatusHistoryEntry[]
 }
 
-export type View = 'dashboard' | 'form' | 'history' | 'positions' | 'pipeline' | 'tasks' | 'candidates' | 'marketing' | 'data' | 'board' | 'management' | 'meta'
+// ── הודעת וואטסאפ (על המועמד או על ליד בתיבה) ──
+export type WaMessageType = 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'location' | 'contact' | 'other'
+export type WaDeliveryStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
+
+export interface WaMessage {
+  id: string
+  direction: 'in' | 'out'
+  text: string
+  timestamp: string
+  type: WaMessageType
+  fileName?: string
+  mimeType?: string
+  fileUrl?: string
+  caption?: string
+  senderName?: string
+  status?: WaDeliveryStatus
+}
+
+export interface StatusHistoryEntry {
+  id: string
+  from: CandidateStatus | null
+  to: CandidateStatus
+  at: string
+  source?: 'crm' | 'create'
+}
+
+// ליד שנכנס לוואטסאפ ועדיין לא שויך למועמד
+export interface WaInboxLead {
+  id: string
+  phone: string
+  chatId: string
+  name: string
+  messages: WaMessage[]
+  unread: number
+  lastMessageAt: string
+  candidateId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WaSessionState {
+  id: 'wa_session'
+  kind: 'session'
+  status: string
+  updatedAt: string
+  provider?: string
+}
+
+export type View = 'dashboard' | 'form' | 'history' | 'positions' | 'pipeline' | 'tasks' | 'candidates' | 'marketing' | 'data' | 'board' | 'management' | 'meta' | 'whatsapp'
 export type DashboardTab = 'daily' | 'weekly' | 'monthly' | 'company'

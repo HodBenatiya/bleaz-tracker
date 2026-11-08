@@ -39,7 +39,7 @@ export default async function handler(req: any, res: any) {
           // ── שלוף את פרטי הליד מ-Graph API ──
           const leadUrl = `https://graph.facebook.com/v19.0/${leadgen_id}?access_token=${process.env.FACEBOOK_PAGE_TOKEN}`
           const leadResp = await fetch(leadUrl)
-          const lead     = await leadResp.json()
+          const lead: any = await leadResp.json()
 
           if (lead.error) {
             console.error('Meta Graph error:', lead.error)
