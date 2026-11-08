@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { sendNotify } from './_provider'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL!,
@@ -15,15 +16,7 @@ function todayStr() {
 }
 
 async function sendWhatsApp(msg: string) {
-  const instanceId = process.env.GREENAPI_ID_INSTANCE!
-  const serverNum  = instanceId.slice(0, 4)
-  const apiBase    = (process.env.GREENAPI_API_URL ?? `https://${serverNum}.api.greenapi.com`).replace(/\/$/, '')
-  const phone      = (process.env.REMINDER_PHONE ?? '').replace(/\D/g, '')
-  await fetch(`${apiBase}/waInstance${instanceId}/sendMessage/${process.env.GREENAPI_API_TOKEN}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chatId: `${phone}@c.us`, message: msg }),
-  })
+  await sendNotify(process.env.REMINDER_PHONE ?? '', msg)
 }
 
 export default async function handler(req: any, res: any) {

@@ -1,4 +1,5 @@
-import type { DailyReport, SavedPosition, PipelineCompany, Task, Candidate } from '../types'
+import type { DailyReport, SavedPosition, PipelineCompany, Task, Candidate, WaInboxLead, WaSessionState } from '../types'
+import { mergeCandidateSave } from './wa'
 import { supabase } from './supabase'
 
 // ── Reports ──────────────────────────────────────────────────────────────────
@@ -117,13 +118,76 @@ export async function loadCandidates(): Promise<Candidate[]> {
   return (data ?? []).map(row => row.data as Candidate)
 }
 
-export async function upsertCandidate(candidate: Candidate): Promise<void> {
+export async function upsertCandidate(candidate: Candidate): Promise<Candidate> {
+  const { data: freshRow, error: readErr } = await supabase
+    .from('candidates').select('data').eq('id', candidate.id).maybeSingle()
+  if (readErr) throw new Error(readErr.message)
+  const merged = mergeCandidateSave(freshRow?.data as Candidate | undefined, candidate)
   const { error } = await supabase.from('candidates').upsert({
-    id:         candidate.id,
-    data:       candidate,
+    id:         merged.id,
+    data:       merged,
     updated_at: new Date().toISOString(),
   })
   if (error) throw new Error(error.message)
+  return merged
+}
+
+export interface WaInboxLoad {
+  rows: WaInboxLead[]
+  session: WaSessionState | null
+  error: string | null
+}
+
+export async function loadWaInbox(): Promise<WaInboxLoad> {
+  const { data, error } = await supabase.from('wa_inbox').select('data').order('updated_at', { ascending: false })
+  if (error) return { rows: [], session: null, error: error.message }
+  const rows: WaInboxLead[] = []
+  let session: WaSessionState | null = null
+  for (const row of data ?? []) {
+    const item = row.data as WaInboxLead & Partial<WaSessionState>
+    if (item?.id === 'wa_session' || item?.kind === 'session') {
+      session = item as WaSessionState
+      continue
+    }
+    rows.push(item)
+  }
+  return { rows, session, error: null }
+}
+
+export async function markCandidateWaRead(id: string): Promise<Candidate | null> {
+  const { data, error } = await supabase.from('candidates').select('data').eq('id', id).maybeSingle()
+  if (error || !data?.data) return null
+  const c = data.data as Candidate
+  if (!c.waUnread) return c
+  const next: Candidate = { ...c, waUnread: 0 }
+  const { error: writeErr } = await supabase.from('candidates').upsert({
+    id,
+    data: next,
+    updated_at: new Date().toISOString(),
+  })
+  if (writeErr) return null
+  return next
+}
+
+export async function markWaInboxRead(id: string): Promise<WaInboxLead | null> {
+  const { data, error } = await supabase.from('wa_inbox').select('data').eq('id', id).maybeSingle()
+  if (error || !data?.data) return null
+  const lead = data.data as WaInboxLead
+  if (!lead.unread) return lead
+  const next: WaInboxLead = { ...lead, unread: 0, updatedAt: new Date().toISOString() }
+  const { error: writeErr } = await supabase.from('wa_inbox').upsert({ id, data: next, updated_at: next.updatedAt })
+  if (writeErr) return null
+  return next
+}
+
+export async function linkWaInbox(id: string, candidateId: string): Promise<WaInboxLead | null> {
+  const { data, error } = await supabase.from('wa_inbox').select('data').eq('id', id).maybeSingle()
+  if (error || !data?.data) return null
+  const lead = data.data as WaInboxLead
+  const next: WaInboxLead = { ...lead, candidateId, unread: 0, updatedAt: new Date().toISOString() }
+  const { error: writeErr } = await supabase.from('wa_inbox').upsert({ id, data: next, updated_at: next.updatedAt })
+  if (writeErr) return null
+  return next
 }
 
 export async function deleteCandidate(id: string): Promise<void> {
