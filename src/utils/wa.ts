@@ -107,12 +107,14 @@ export function mergeWaMessages(a?: WaMessage[] | null, b?: WaMessage[] | null):
   const map = new Map<string, WaMessage>()
   const put = (raw: unknown) => {
     if (!raw || typeof raw !== 'object') return
-    const m = raw as WaMessage & { createdAt?: unknown }
+    const m = raw as WaMessage & { createdAt?: unknown; at?: unknown; dir?: unknown }
     if (!m.id) return
+    const direction: 'in' | 'out' = m.direction === 'out' || m.dir === 'out' ? 'out' : 'in'
     const next: WaMessage = {
       ...m,
+      direction,
       text: textOf(m.text),
-      timestamp: timeOf(m.timestamp) || timeOf(m.createdAt),
+      timestamp: timeOf(m.timestamp) || timeOf(m.at) || timeOf(m.createdAt),
     }
     const prev = map.get(next.id)
     if (!prev) { map.set(next.id, next); return }
@@ -137,7 +139,7 @@ export function mergeStatusHistory(a: StatusHistoryEntry[] = [], b: StatusHistor
   const map = new Map<string, StatusHistoryEntry>()
   for (const e of a) if (e?.id) map.set(e.id, e)
   for (const e of b) if (e?.id) map.set(e.id, e)
-  return Array.from(map.values()).sort((x, y) => x.at.localeCompare(y.at))
+  return Array.from(map.values()).sort((x, y) => timeOf(x?.at).localeCompare(timeOf(y?.at)))
 }
 
 function laterIso(...values: Array<string | undefined>): string | undefined {
