@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { ChevronRight, ChevronLeft, ChevronDown, Edit2, Check, X, TrendingUp, DollarSign, Users, Clock, AlertCircle, CalendarCheck } from 'lucide-react'
 import type { Candidate, SavedPosition, DailyReport } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
-import { candidateAnchor, isPlacement } from '../utils/candidateAnchor'
+import { candidateAnchor, placementAttribution, placementInMonth } from '../utils/candidateAnchor'
+import AttributionMonthField from './AttributionMonthField'
 
 const PLACEMENT_FEE = 5000
 
@@ -58,7 +59,7 @@ function inMonth(dateStr: string | undefined, f: MonthFilter): boolean {
 }
 
 function placedInMonth(c: Candidate, f: MonthFilter): boolean {
-  return isPlacement(c) && inMonth(candidateAnchor(c).day, f)
+  return placementInMonth(c, f.year, f.month)
 }
 function daysInMonth(f: MonthFilter): number {
   return new Date(f.year, f.month, 0).getDate()
@@ -148,7 +149,10 @@ export default function Management({ candidates, positions, reports, onCandidate
 
   // A placement belongs to the month the candidate was created, not the start or interview date.
   const placements = candidates.filter(c => placedInMonth(c, filter))
-  const fallbackPlacements = placements.filter(c => candidateAnchor(c).fallback)
+  const fallbackPlacements = placements.filter(c => {
+    const attribution = placementAttribution(c)
+    return attribution.fallback && !attribution.manual
+  })
 
   // All active in pipeline (not new, not irrelevant)
   const inPipeline = candidates.filter(c =>
@@ -310,8 +314,13 @@ export default function Management({ candidates, positions, reports, onCandidate
                         <div className="text-xs text-slate-500">
                           {company}
                           {candidateAnchor(c).day ? ` · נוצר ${fmtDate(candidateAnchor(c).day)}` : ''}
-                          {candidateAnchor(c).fallback ? ' · תאריך משוער' : ''}
                           {c.startDate ? ` · התחיל ${fmtDate(c.startDate)}` : ''}
+                        </div>
+                        <div className="mt-1">
+                          <AttributionMonthField
+                            candidate={c}
+                            onPick={next => onCandidatesChange(candidates.map(item => item.id === c.id ? { ...next, updatedAt: new Date().toISOString() } : item))}
+                          />
                         </div>
                       </div>
                     </div>
