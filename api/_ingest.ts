@@ -1,11 +1,13 @@
 import type { Candidate, WaDeliveryStatus, WaInboxLead, WaMessage, WaSessionState } from '../src/types/index.js'
 import {
   applyKnownLid,
+  personName,
   inboxRowId,
   isOwnWaIdentity,
   looksLikeCv,
   looksLikeWaLid,
   mergeWaMessages,
+  messageKey,
   phoneKey,
   preferDeliveryStatus,
   threadKeyFromChat,
@@ -14,7 +16,7 @@ import {
 } from '../src/utils/wa.js'
 import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse.js'
 import { db } from './_db.js'
-import { downloadIncomingMedia, providerName, redactError, resolveWahaPhone } from './_provider.js'
+import { downloadIncomingMedia, fetchWahaContactCard, providerName, redactError, resolveWahaPhone } from './_provider.js'
 import { captureTaskCommand } from './_tasks.js'
 
 interface CandidateRow { id: string; data: Candidate }
@@ -144,7 +146,8 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
   }
   const existed = (base.messages ?? []).some(m => m.id === message.id)
   const messages = mergeWaMessages(base.messages, [message])
-  const keepName = base.name && base.name !== base.phone && base.name !== phone
+  const incomingName = personName(parsed.senderName, phone)
+  const keptName = personName(base.name, phone)
   const next: WaInboxLead = {
     ...base,
     id,
@@ -153,7 +156,8 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
     lid: parsed.lid || prev?.lid,
     provider: parsed.source || prev?.provider || 'waha',
     phoneUnresolved: unresolved,
-    name: keepName ? base.name : (parsed.senderName || base.name || (unresolved ? '' : phone)),
+    pushName: incomingName || prev?.pushName,
+    name: incomingName || keptName || (unresolved ? '' : phone),
     messages,
     unread: existed || message.direction !== 'in' ? (base.unread ?? 0) : (base.unread ?? 0) + 1,
     lastMessageAt: messages.length ? messages[messages.length - 1].timestamp : message.timestamp,
@@ -162,13 +166,29 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
   await writeInbox(id, next, now)
 }
 
-async function alreadyStored(id: string, chatId: string): Promise<boolean> {
+function sameStoredMessage(existing: WaMessage | undefined, incoming: { id: string; text?: string; timestamp?: string; direction?: string }): boolean {
+  if (!existing?.id) return false
+  if (existing.id === incoming.id || messageKey(existing.id) === messageKey(incoming.id)) return true
+  if (incoming.direction !== 'out' || existing.direction !== 'out') return false
+  if ((existing.text || '') !== (incoming.text || '')) return false
+  const local = existing.id.startsWith('local_') || incoming.id.startsWith('local_')
+  if (!local) return false
+  const left = Date.parse(existing.timestamp)
+  const right = Date.parse(incoming.timestamp || '')
+  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) < 2 * 60 * 1000
+}
+
+async function alreadyStored(id: string, chatId: string, twin?: { text?: string; timestamp?: string; direction?: string }): Promise<boolean> {
+  const needle = { id, text: twin?.text, timestamp: twin?.timestamp, direction: twin?.direction }
   const rows = await loadCandidateRows()
-  if (rows.some(r => (r.data?.waMessages ?? []).some(m => m.id === id))) return true
-  const { data, error } = await db().from('wa_inbox').select('data').eq('id', inboxRowId(chatId)).maybeSingle()
-  if (error || !data?.data) return false
-  const lead = data.data as WaInboxLead
-  return (lead.messages ?? []).some(m => m.id === id)
+  if (rows.some(r => (r.data?.waMessages ?? []).some(m => sameStoredMessage(m, needle)))) return true
+  const { data, error } = await db().from('wa_inbox').select('id, data').limit(500)
+  if (error || !data) {
+    const one = await db().from('wa_inbox').select('data').eq('id', inboxRowId(chatId)).maybeSingle()
+    const lead = one.data?.data as WaInboxLead | undefined
+    return (lead?.messages ?? []).some(m => sameStoredMessage(m, needle))
+  }
+  return data.some(row => ((row.data as WaInboxLead | undefined)?.messages ?? []).some(m => sameStoredMessage(m, needle)))
 }
 
 function safeStorageName(name: string): string {
@@ -276,6 +296,7 @@ async function attachMediaIfMissing(incoming: ParsedMessage): Promise<void> {
 }
 
 export async function storeOutgoingMessage(chatId: string, message: WaMessage): Promise<void> {
+  if (await alreadyStored(message.id, chatId, message)) return
   const parsed: ParsedMessage = {
     id: message.id,
     chatId,
@@ -377,7 +398,54 @@ export async function repairLidInbox(session?: string): Promise<number> {
     await writeInbox(String(row.id), { ...lead, mergedInto: targetId, provider: 'waha', lid, messages: tagged, updatedAt: now }, now)
     fixed++
   }
+  fixed += await refreshContactCards(session)
   return fixed
+}
+
+const PICTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+function contactIdFor(lead: WaInboxLead): string {
+  if (lead.chatId?.endsWith('@c.us')) return lead.chatId
+  if (lead.phone && !looksLikeWaLid(lead.phone)) return toWhatsAppChatId(lead.phone)
+  if (lead.lid) return lead.lid.endsWith('@lid') ? lead.lid : `${lead.lid.replace(/\D/g, '')}@lid`
+  return lead.chatId || ''
+}
+
+function pictureStale(lead: WaInboxLead): boolean {
+  if (!lead.pictureAt) return true
+  const at = new Date(lead.pictureAt).getTime()
+  return !Number.isFinite(at) || Date.now() - at > PICTURE_MAX_AGE_MS
+}
+
+async function refreshContactCards(session?: string): Promise<number> {
+  const { data, error } = await db().from('wa_inbox').select('id, data').limit(500)
+  if (error) throw new Error(error.message)
+  let updated = 0
+  let fetched = 0
+  for (const row of data ?? []) {
+    if (fetched >= 8) break
+    if (row.id === 'wa_session') continue
+    const lead = row.data as WaInboxLead
+    if (!lead || lead.mergedInto || lead.provider === 'greenapi') continue
+    if (!pictureStale(lead) && personName(lead.pushName || lead.name, lead.phone)) continue
+    const contactId = contactIdFor(lead)
+    if (!contactId) continue
+    fetched++
+    const card = await fetchWahaContactCard(contactId, session)
+    const now = new Date().toISOString()
+    const pushName = personName(card?.name, lead.phone) || lead.pushName
+    const pictureUrl = card ? (card.pictureUrl || '') : lead.pictureUrl
+    await writeInbox(String(row.id), {
+      ...lead,
+      pushName,
+      name: pushName || lead.name,
+      pictureUrl,
+      pictureAt: now,
+      updatedAt: now,
+    }, now)
+    updated++
+  }
+  return updated
 }
 
 export async function ingestWebhookBody(
@@ -402,8 +470,8 @@ export async function ingestWebhookBody(
   if (resolved === 'self') return { action: 'ignored-self' }
   const incoming = resolved
   if (
-    await alreadyStored(incoming.id, incoming.chatId) ||
-    (incoming.lid ? await alreadyStored(incoming.id, incoming.lid) : false)
+    await alreadyStored(incoming.id, incoming.chatId, incoming) ||
+    (incoming.lid ? await alreadyStored(incoming.id, incoming.lid, incoming) : false)
   ) {
     if (opts?.downloadFiles !== false && (incoming.downloadUrl || incoming.hasMedia)) {
       await attachMediaIfMissing(incoming)

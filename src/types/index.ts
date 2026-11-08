@@ -265,6 +265,9 @@ export interface WaInboxLead {
   phone: string
   chatId: string
   name: string
+  pushName?: string
+  pictureUrl?: string
+  pictureAt?: string
   messages: WaMessage[]
   unread: number
   lastMessageAt: string

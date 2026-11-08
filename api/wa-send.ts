@@ -1,7 +1,7 @@
 import type { WaMessage } from '../src/types/index.js'
 import { toWhatsAppChatId } from '../src/utils/wa.js'
 import { storeOutgoingMessage } from './_ingest.js'
-import { redactError, sendInboxText } from './_provider.js'
+import { providerName, redactError, sendInboxText } from './_provider.js'
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })
@@ -20,8 +20,14 @@ export default async function handler(req: any, res: any) {
     const sent = await sendInboxText(chatId, text)
     id = sent.id
   } catch (err) {
-    console.error('wa-send', redactError(err))
-    return res.status(502).json({ ok: false, sent: false, error: 'השליחה נכשלה. בדקו שהסשן מחובר ונסו שוב.' })
+    const detail = redactError(err)
+    console.error('wa-send', detail)
+    return res.status(502).json({
+      ok: false,
+      sent: false,
+      error: 'השליחה נכשלה. בדקו שהסשן מחובר ונסו שוב.',
+      detail,
+    })
   }
 
   const message: WaMessage = {
@@ -31,20 +37,14 @@ export default async function handler(req: any, res: any) {
     timestamp: new Date().toISOString(),
     type: 'text',
     status: 'sent',
+    source: providerName() === 'waha' ? 'waha' : 'greenapi',
   }
 
   try {
     await storeOutgoingMessage(chatId, message)
-    return res.status(200).json({ ok: true, id, message })
+    return res.status(200).json({ ok: true, stored: true, id, message })
   } catch (err) {
     console.error('wa-send store', redactError(err))
-    return res.status(200).json({
-      ok: false,
-      sent: true,
-      stored: false,
-      id,
-      message,
-      error: 'ההודעה נשלחה אבל לא נשמרה במערכת. רעננו את השיחה.',
-    })
+    return res.status(200).json({ ok: true, stored: false, id, message })
   }
 }

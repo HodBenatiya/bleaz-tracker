@@ -42,14 +42,18 @@ function isoFromUnix(ts: unknown): string {
 
 export function messageIdOf(id: unknown): string {
   if (typeof id === 'string') return id
-  if (id && typeof id === 'object') {
-    const o = id as Record<string, any>
-    if (typeof o._serialized === 'string') return o._serialized
-    if (typeof o.id === 'string' && typeof o.remote === 'string') {
-      return `${o.fromMe ? 'true' : 'false'}_${o.remote}_${o.id}`
-    }
-    if (typeof o.id === 'string') return o.id
+  if (!id || typeof id !== 'object') return ''
+  const o = id as Record<string, any>
+  if (typeof o._serialized === 'string' && o._serialized) return o._serialized
+  if (o.key && o.key !== o) {
+    const fromKey = messageIdOf(o.key)
+    if (fromKey) return fromKey
   }
+  const remote = typeof o.remote === 'string' ? o.remote : typeof o.remoteJid === 'string' ? o.remoteJid.replace('@s.whatsapp.net', '@c.us') : ''
+  if (typeof o.id === 'string' && o.id && remote) return `${o.fromMe ? 'true' : 'false'}_${remote}_${o.id}`
+  if (typeof o.id === 'string' && o.id) return o.id
+  if (o.id && typeof o.id === 'object' && o.id !== o) return messageIdOf(o.id)
+  if (o._data && o._data !== o) return messageIdOf(o._data)
   return ''
 }
 
@@ -162,7 +166,12 @@ function parseWahaMessage(payload: Record<string, any>, directionHint?: 'in' | '
   else if (payload.location) { type = 'location'; text = text || 'מיקום' }
   const direction: 'in' | 'out' = directionHint ?? (payload.fromMe ? 'out' : 'in')
   const senderName = direction === 'in'
-    ? cleanName(payload.notifyName || payload._data?.notifyName || payload.pushName, chatId)
+    ? cleanName(
+      payload.notifyName || payload.pushName ||
+      payload._data?.notifyName || payload._data?.pushName ||
+      payload._data?.Info?.PushName || payload._data?.Info?.pushName,
+      chatId,
+    )
     : ''
   return {
     id,
