@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { candidateAnchor, isPlacement, placementAttribution, placementInMonth, placementOverlapsRange, withAttributionMonth } from '../src/utils/candidateAnchor'
+import { candidateAnchor, classifyPlacementForSpendRange, isPlacement, placementAttribution, placementInMonth, placementOverlapsRange, withAttributionMonth } from '../src/utils/candidateAnchor'
 import { mergeCandidateSave } from '../src/utils/wa'
 import type { Candidate } from '../src/types'
 
@@ -81,6 +81,39 @@ assert.equal(kept.createdAt, stored.createdAt)
 const cleared = mergeCandidateSave(stored, reset)
 assert.equal(cleared.attributionMonth, undefined)
 assert.equal(placementAttribution(cleared).month, '2026-10')
+
+const placedToday = { ...created, id: 'today', createdAt: '2026-11-08T09:00:00.000Z', startDate: '2026-11-08' }
+const placedYesterday = { ...created, id: 'yesterday', createdAt: '2026-11-07T09:00:00.000Z', startDate: '2026-11-07' }
+const placedInWeek = { ...created, id: 'week', createdAt: '2026-11-03T09:00:00.000Z', startDate: '2026-11-03' }
+const novemberOverride = withAttributionMonth(created, '2026-11')
+const decemberOverride = withAttributionMonth(placedToday, '2026-12')
+
+assert.equal(classifyPlacementForSpendRange(placedToday, '2026-11-08', '2026-11-08'), 'dated')
+assert.equal(classifyPlacementForSpendRange(created, '2026-11-08', '2026-11-08'), 'out')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-11-08', '2026-11-08'), 'withheld')
+assert.equal(classifyPlacementForSpendRange(placedYesterday, '2026-11-07', '2026-11-07'), 'dated')
+assert.equal(classifyPlacementForSpendRange(placedToday, '2026-11-07', '2026-11-07'), 'out')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-11-07', '2026-11-07'), 'withheld')
+assert.equal(classifyPlacementForSpendRange(placedInWeek, '2026-11-02', '2026-11-08'), 'dated')
+assert.equal(classifyPlacementForSpendRange(created, '2026-11-02', '2026-11-08'), 'out')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-11-02', '2026-11-08'), 'withheld')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-11-01', '2026-11-08'), 'withheld')
+assert.equal(classifyPlacementForSpendRange(placedToday, '2026-11-01', '2026-11-08'), 'dated')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-11-01', '2026-11-30'), 'month')
+assert.equal(classifyPlacementForSpendRange(created, '2026-11-01', '2026-11-30'), 'out')
+assert.equal(classifyPlacementForSpendRange(placedToday, '2026-11-01', '2026-11-30'), 'dated')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-10-01', '2026-11-30'), 'month')
+assert.equal(classifyPlacementForSpendRange(created, '2026-10-01', '2026-11-30'), 'dated')
+assert.equal(classifyPlacementForSpendRange(decemberOverride, '2026-10-01', '2026-11-30'), 'out')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-10-20', '2026-11-10'), 'withheld')
+assert.equal(classifyPlacementForSpendRange(withAttributionMonth(created, '2026-10'), '2026-10-20', '2026-11-10'), 'withheld')
+assert.equal(classifyPlacementForSpendRange(placedInWeek, '2026-10-20', '2026-11-10'), 'dated')
+
+const resetSpend = withAttributionMonth(novemberOverride, null)
+assert.equal(resetSpend.attributionMonth, undefined)
+assert.equal(classifyPlacementForSpendRange(resetSpend, '2026-10-17', '2026-10-17'), 'dated')
+assert.equal(classifyPlacementForSpendRange(resetSpend, '2026-11-01', '2026-11-30'), 'out')
+assert.equal(classifyPlacementForSpendRange(novemberOverride, '2026-11-01', '2026-11-30'), 'month')
 
 const untouched = { ...created, attributionMonth: '2026-11' }
 const snapshot = JSON.stringify(untouched)
