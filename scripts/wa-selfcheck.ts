@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
+import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, phoneKey, screeningNoteFields, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
 import { messageIdOf, parseProviderWebhook } from '../src/utils/waParse'
 import type { Candidate } from '../src/types'
 
@@ -239,5 +239,22 @@ if (lidPayload.kind === 'message') {
   assert.equal(lidPayload.message.phoneJid, '972521112233@c.us')
   assert.equal(lidPayload.message.lid, '268371165761674@lid')
 }
+
+const freshNote = screeningNoteFields(undefined, '  עבדה במוקד, זמינה למשרה מלאה  ', '2026-11-08T12:00:00.000Z', 'n1')
+assert.equal(freshNote.notes, 'עבדה במוקד, זמינה למשרה מלאה')
+assert.deepEqual(freshNote.noteHistory, [])
+
+const withHistory = screeningNoteFields(
+  { notes: 'הערה ישנה', noteHistory: [{ id: 'old', text: 'הערה ישנה', createdAt: '2026-11-01T00:00:00.000Z' }] },
+  'שיחת סינון: ניסיון במכירות',
+  '2026-11-08T12:00:00.000Z',
+  'n2',
+)
+assert.equal(withHistory.notes, 'שיחת סינון: ניסיון במכירות')
+assert.equal(withHistory.noteHistory.length, 2)
+assert.equal(withHistory.noteHistory[1].text, 'שיחת סינון: ניסיון במכירות')
+
+const sameAgain = screeningNoteFields(withHistory, 'שיחת סינון: ניסיון במכירות', '2026-11-08T13:00:00.000Z', 'n3')
+assert.equal(sameAgain.noteHistory.length, 2)
 
 console.log('wa selfcheck ok')

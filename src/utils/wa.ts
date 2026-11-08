@@ -1,5 +1,6 @@
 import type {
   Candidate,
+  CandidateNote,
   StatusHistoryEntry,
   WaDeliveryStatus,
   WaInboxLead,
@@ -373,6 +374,24 @@ export function personName(name: unknown, phone: string): string {
   if (phoneKey(n) && phoneKey(n) === phoneKey(phone)) return ''
   if (/^\+?\d[\d\s-]+$/.test(n)) return ''
   return n
+}
+
+/** Same shape as the Candidates form: `notes` is the הערה field. A later note is appended to noteHistory so the card keeps showing it. */
+export function screeningNoteFields(
+  existing: { notes?: string; noteHistory?: CandidateNote[] } | undefined,
+  text: string,
+  now: string,
+  id: string,
+): { notes: string; noteHistory: CandidateNote[] } {
+  const trimmed = text.trim()
+  const history = existing?.noteHistory ?? []
+  if (!trimmed) return { notes: existing?.notes ?? '', noteHistory: history }
+  if (history.length === 0) return { notes: trimmed, noteHistory: [] }
+  if (history[history.length - 1]?.text === trimmed) return { notes: trimmed, noteHistory: history }
+  return {
+    notes: trimmed,
+    noteHistory: [...history, { id, text: trimmed, createdAt: now }],
+  }
 }
 
 export interface WaThread {
