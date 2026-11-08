@@ -31,7 +31,8 @@ export default async function handler(req: any, res: any) {
     const result = await ingestWebhookBody(body, { downloadFiles: true, captureTasks: true })
     return res.status(200).json({ ok: true, ...result })
   } catch (err) {
-    console.error('wa-webhook', redactError(err))
-    return res.status(500).json({ error: 'ingest failed' })
+    const detail = redactError(err)
+    console.error('wa-webhook', detail)
+    return res.status(500).json({ error: 'ingest failed', detail })
   }
 }

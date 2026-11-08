@@ -116,6 +116,16 @@ const broken = buildWaThreads(
 )
 assert.equal(broken.length, 1)
 assert.equal(broken[0].messages.length, 2)
+
+const legacy = buildWaThreads([{
+  ...base,
+  id: 'legacy',
+  phone: '0544444444',
+  waMessages: [{ id: 'old1', text: 'היי', dir: 'out', at: '2026-03-01T00:00:00.000Z' }],
+}] as Candidate[], [])
+assert.equal(legacy.length, 1)
+assert.equal(legacy[0].messages[0].direction, 'out')
+assert.equal(legacy[0].messages[0].timestamp, '2026-03-01T00:00:00.000Z')
 assert.equal(mergeCandidateSave(oldCandidate, { ...oldCandidate, city: 'עכו' }).city, 'עכו')
 
 console.log('wa selfcheck ok')

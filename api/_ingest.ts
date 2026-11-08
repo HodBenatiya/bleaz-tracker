@@ -76,6 +76,22 @@ async function appendToCandidate(id: string, fallback: Candidate, message: WaMes
   await writeCandidate(id, next)
 }
 
+function inboxWriteError(error: { message?: string; code?: string }): Error {
+  const message = error.message || 'wa_inbox write failed'
+  if (/row-level security/i.test(message)) {
+    return new Error(`${message}. RLS is still enabled on wa_inbox — run schema_wa.sql again.`)
+  }
+  return new Error(error.code ? `${error.code}: ${message}` : message)
+}
+
+async function writeInbox(id: string, data: unknown, updatedAt: string): Promise<void> {
+  const { error } = await db().from('wa_inbox').upsert(
+    { id, data, updated_at: updatedAt },
+    { onConflict: 'id' },
+  )
+  if (error) throw inboxWriteError(error)
+}
+
 async function linkInbox(chatId: string, candidateId: string): Promise<void> {
   const id = inboxRowId(chatId)
   const { data, error } = await db().from('wa_inbox').select('data').eq('id', id).maybeSingle()
@@ -83,7 +99,7 @@ async function linkInbox(chatId: string, candidateId: string): Promise<void> {
   const lead = data.data as WaInboxLead
   if (lead.candidateId === candidateId) return
   const next: WaInboxLead = { ...lead, candidateId, updatedAt: new Date().toISOString() }
-  await db().from('wa_inbox').upsert({ id, data: next, updated_at: next.updatedAt })
+  await writeInbox(id, next, next.updatedAt)
 }
 
 async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise<void> {
@@ -126,8 +142,7 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
     lastMessageAt: messages.length ? messages[messages.length - 1].timestamp : message.timestamp,
     updatedAt: now,
   }
-  const { error: writeErr } = await db().from('wa_inbox').upsert({ id, data: next, updated_at: now })
-  if (writeErr) throw new Error(writeErr.message)
+  await writeInbox(id, next, now)
 }
 
 async function alreadyStored(id: string, chatId: string): Promise<boolean> {
@@ -167,8 +182,7 @@ async function storeSession(status: string): Promise<void> {
     updatedAt: new Date().toISOString(),
     provider: providerName(),
   }
-  const { error } = await db().from('wa_inbox').upsert({ id: row.id, data: row, updated_at: row.updatedAt })
-  if (error) throw new Error(error.message)
+  await writeInbox(row.id, row, row.updatedAt)
 }
 
 async function applyAck(chatId: string, id: string, status: WaDeliveryStatus): Promise<void> {
@@ -205,8 +219,7 @@ async function applyAck(chatId: string, id: string, status: WaDeliveryStatus): P
       messages: lead.messages.map(m => m.id === id ? { ...m, status: preferDeliveryStatus(m.status, status) } : m),
       updatedAt: new Date().toISOString(),
     }
-    const { error: writeErr } = await db().from('wa_inbox').upsert({ id: rowId, data: next, updated_at: next.updatedAt })
-    if (writeErr) throw new Error(writeErr.message)
+    await writeInbox(rowId, next, next.updatedAt)
     return
   }
 }
@@ -242,7 +255,7 @@ async function attachMediaIfMissing(incoming: ParsedMessage): Promise<void> {
       : m),
     updatedAt: new Date().toISOString(),
   }
-  await db().from('wa_inbox').upsert({ id: rowId, data: next, updated_at: next.updatedAt })
+  await writeInbox(rowId, next, next.updatedAt)
 }
 
 export async function storeOutgoingMessage(chatId: string, message: WaMessage): Promise<void> {

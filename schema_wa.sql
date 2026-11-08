@@ -8,7 +8,20 @@ create table if not exists wa_inbox (
   updated_at timestamptz default now()
 );
 
-alter table wa_inbox disable row level security;
+-- The anon key can already SELECT. INSERT still fails with
+-- 42501 "new row violates row-level security policy" while RLS is enabled
+-- and there is no policy. Re-run this whole file on the live project.
+grant select, insert, update, delete on table public.wa_inbox to anon, authenticated, service_role;
+
+alter table public.wa_inbox disable row level security;
+
+drop policy if exists wa_inbox_internal_all on public.wa_inbox;
+create policy wa_inbox_internal_all
+  on public.wa_inbox
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
 
 do $$
 begin
