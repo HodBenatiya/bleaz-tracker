@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
+import { applyCandidateSave, emptyCandidate } from '../src/utils/candidateSave'
+import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, personName, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
 import { messageIdOf, parseProviderWebhook } from '../src/utils/waParse'
 import type { Candidate } from '../src/types'
 
@@ -259,5 +260,26 @@ if (lidPayload.kind === 'message') {
   assert.equal(lidPayload.message.phoneJid, '972521112233@c.us')
   assert.equal(lidPayload.message.lid, '268371165761674@lid')
 }
+
+const fresh = emptyCandidate('2026-11-08T12:00:00.000Z')
+fresh.name = 'דני'
+fresh.phone = '0509998887'
+fresh.source = 'WhatsApp'
+fresh.notes = 'שיחת סינון: מוקד'
+const created = applyCandidateSave([], fresh, [])
+assert.equal(created.length, 1)
+assert.equal(created[0].notes, 'שיחת סינון: מוקד')
+assert.equal(created[0].source, 'WhatsApp')
+assert.equal(created[0].status, 'new')
+assert.deepEqual(created[0].noteHistory, [])
+
+const scheduled = applyCandidateSave(created, { ...created[0], status: 'interview_scheduled' }, [])
+assert.equal(scheduled[0].interviewDate, new Date().toISOString().split('T')[0])
+assert.equal(scheduled.length, 1)
+
+assert.equal(toLocalPhone('972509998887'), '0509998887')
+assert.equal(phoneKey('0509998887'), phoneKey('972509998887'))
+assert.equal(personName('דני', '0509998887'), 'דני')
+assert.equal(personName('050-9998887', '0509998887'), '')
 
 console.log('wa selfcheck ok')
