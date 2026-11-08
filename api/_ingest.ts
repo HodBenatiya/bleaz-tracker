@@ -1,4 +1,4 @@
-import type { Candidate, WaDeliveryStatus, WaInboxLead, WaMessage, WaSessionState } from '../src/types'
+import type { Candidate, WaDeliveryStatus, WaInboxLead, WaMessage, WaSessionState } from '../src/types/index.js'
 import {
   inboxRowId,
   looksLikeCv,
@@ -8,11 +8,11 @@ import {
   threadKeyFromChat,
   toLocalPhone,
   toWhatsAppChatId,
-} from '../src/utils/wa'
-import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse'
-import { db } from './_db'
-import { downloadIncomingMedia, providerName, redactError } from './_provider'
-import { captureTaskCommand } from './_tasks'
+} from '../src/utils/wa.js'
+import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse.js'
+import { db } from './_db.js'
+import { downloadIncomingMedia, providerName, redactError } from './_provider.js'
+import { captureTaskCommand } from './_tasks.js'
 
 interface CandidateRow { id: string; data: Candidate }
 

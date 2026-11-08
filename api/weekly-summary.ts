@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { sendNotify } from './_provider'
+import { sendNotify } from './_provider.js'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL!,

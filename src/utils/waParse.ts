@@ -1,5 +1,5 @@
 import type { WaDeliveryStatus, WaMessageType } from '../types'
-import { typeFromMime } from './wa'
+import { typeFromMime } from './wa.js'
 
 export interface ParsedMessage {
   id: string

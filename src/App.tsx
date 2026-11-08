@@ -215,8 +215,8 @@ export default function App() {
     setWaInbox(prev => prev.map(l => l.id === next.id ? next : l))
   }, [])
 
-  const waUnread = candidates.reduce((sum, c) => sum + (c.waUnread ?? 0), 0)
-    + waInbox.reduce((sum, lead) => sum + (lead.candidateId ? 0 : (lead.unread ?? 0)), 0)
+  const waUnread = (candidates ?? []).reduce((sum, c) => sum + (c?.waUnread ?? 0), 0)
+    + (waInbox ?? []).reduce((sum, lead) => sum + (!lead || lead.candidateId ? 0 : (lead.unread ?? 0)), 0)
 
   // ── Loading screen ──
   if (loading) {

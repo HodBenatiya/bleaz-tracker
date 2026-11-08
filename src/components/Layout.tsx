@@ -111,7 +111,7 @@ export default function Layout({ view, onNav, children, onNewDay, tasks, waUnrea
           <LiveClock />
         </div>
 
-        <main className={view === 'whatsapp' ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1 p-5'}>
+        <main className={view === 'whatsapp' ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 p-5'}>
           {children}
         </main>
       </div>

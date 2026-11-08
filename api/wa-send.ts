@@ -1,7 +1,7 @@
-import type { WaMessage } from '../src/types'
-import { toWhatsAppChatId } from '../src/utils/wa'
-import { storeOutgoingMessage } from './_ingest'
-import { redactError, sendInboxText } from './_provider'
+import type { WaMessage } from '../src/types/index.js'
+import { toWhatsAppChatId } from '../src/utils/wa.js'
+import { storeOutgoingMessage } from './_ingest.js'
+import { redactError, sendInboxText } from './_provider.js'
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })

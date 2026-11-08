@@ -86,26 +86,51 @@ export function preferDeliveryStatus(prev?: WaDeliveryStatus, next?: WaDeliveryS
   return DELIVERY_RANK[next] >= DELIVERY_RANK[prev] ? next : prev
 }
 
-export function mergeWaMessages(a: WaMessage[] = [], b: WaMessage[] = []): WaMessage[] {
+function asList<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : []
+}
+
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value : value == null ? '' : String(value)
+}
+
+function timeOf(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value < 1e12 ? value * 1000 : value
+    return new Date(ms).toISOString()
+  }
+  return ''
+}
+
+export function mergeWaMessages(a?: WaMessage[] | null, b?: WaMessage[] | null): WaMessage[] {
   const map = new Map<string, WaMessage>()
-  const put = (m: WaMessage) => {
-    if (!m?.id) return
-    const prev = map.get(m.id)
-    if (!prev) { map.set(m.id, m); return }
-    map.set(m.id, {
-      ...prev,
+  const put = (raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return
+    const m = raw as WaMessage & { createdAt?: unknown }
+    if (!m.id) return
+    const next: WaMessage = {
       ...m,
-      text: m.text || prev.text,
-      fileUrl: m.fileUrl || prev.fileUrl,
-      fileName: m.fileName || prev.fileName,
-      mimeType: m.mimeType || prev.mimeType,
-      senderName: m.senderName || prev.senderName,
-      status: preferDeliveryStatus(prev.status, m.status),
+      text: textOf(m.text),
+      timestamp: timeOf(m.timestamp) || timeOf(m.createdAt),
+    }
+    const prev = map.get(next.id)
+    if (!prev) { map.set(next.id, next); return }
+    map.set(next.id, {
+      ...prev,
+      ...next,
+      text: next.text || prev.text,
+      timestamp: next.timestamp || prev.timestamp,
+      fileUrl: next.fileUrl || prev.fileUrl,
+      fileName: next.fileName || prev.fileName,
+      mimeType: next.mimeType || prev.mimeType,
+      senderName: next.senderName || prev.senderName,
+      status: preferDeliveryStatus(prev.status, next.status),
     })
   }
-  for (const m of a) put(m)
-  for (const m of b) put(m)
-  return Array.from(map.values()).sort((x, y) => x.timestamp.localeCompare(y.timestamp))
+  for (const m of asList(a)) put(m)
+  for (const m of asList(b)) put(m)
+  return Array.from(map.values()).sort((x, y) => timeOf(x.timestamp).localeCompare(timeOf(y.timestamp)))
 }
 
 export function mergeStatusHistory(a: StatusHistoryEntry[] = [], b: StatusHistoryEntry[] = []): StatusHistoryEntry[] {
@@ -192,17 +217,18 @@ export function looksLikeCv(fileName?: string, mime?: string): boolean {
   return false
 }
 
-export function latestCv(messages: WaMessage[]): { url: string; name?: string } | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.fileUrl && looksLikeCv(m.fileName, m.mimeType)) return { url: m.fileUrl, name: m.fileName }
+export function latestCv(messages: WaMessage[] | null | undefined): { url: string; name?: string } | null {
+  const list = asList<WaMessage>(messages)
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (m?.fileUrl && looksLikeCv(m.fileName, m.mimeType)) return { url: m.fileUrl, name: m.fileName }
   }
   return null
 }
 
 export function messagePreview(m: WaMessage | undefined): string {
   if (!m) return ''
-  const caption = (m.text || '').trim()
+  const caption = textOf(m.text).trim()
   const label =
     m.type === 'image' ? 'תמונה' :
     m.type === 'video' ? 'סרטון' :
@@ -215,8 +241,8 @@ export function messagePreview(m: WaMessage | undefined): string {
   return caption ? `${label} · ${caption}` : label
 }
 
-function personName(name: string | undefined, phone: string): string {
-  const n = (name || '').trim()
+function personName(name: unknown, phone: string): string {
+  const n = textOf(name).trim()
   if (!n) return ''
   if (phoneKey(n) && phoneKey(n) === phoneKey(phone)) return ''
   if (/^\+?\d[\d\s-]+$/.test(n)) return ''
@@ -238,7 +264,9 @@ export interface WaThread {
   lid: boolean
 }
 
-export function buildWaThreads(candidates: Candidate[], inbox: WaInboxLead[]): WaThread[] {
+export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox: WaInboxLead[] | null | undefined): WaThread[] {
+  const safeCandidates = asList<Candidate>(candidates).filter(c => c && typeof c === 'object')
+  const safeInbox = asList<WaInboxLead>(inbox).filter(lead => lead && typeof lead === 'object')
   const byKey = new Map<string, { candidate?: Candidate; lead?: WaInboxLead }>()
 
   const putCandidate = (key: string, c: Candidate) => {
@@ -247,25 +275,25 @@ export function buildWaThreads(candidates: Candidate[], inbox: WaInboxLead[]): W
     const prev = slot.candidate
     if (!prev) slot.candidate = c
     else {
-      const prevN = prev.waMessages?.length ?? 0
-      const nextN = c.waMessages?.length ?? 0
+      const prevN = asList(prev.waMessages).length
+      const nextN = asList(c.waMessages).length
       if (nextN > prevN || (nextN === prevN && (c.updatedAt || '') > (prev.updatedAt || ''))) slot.candidate = c
     }
     byKey.set(key, slot)
   }
 
-  for (const c of candidates) {
-    if (!(c.waMessages && c.waMessages.length) && !c.lastWaAt && !c.waChatId) continue
+  for (const c of safeCandidates) {
+    if (!asList(c.waMessages).length && !c.lastWaAt && !c.waChatId) continue
     putCandidate(candidateThreadKey(c), c)
   }
 
-  for (const lead of inbox) {
+  for (const lead of safeInbox) {
     if (!lead || lead.id === 'wa_session') continue
     const key = threadKeyFromChat(lead.chatId || lead.phone)
     if (!key) continue
     const slot = byKey.get(key) ?? {}
     if (!slot.candidate) {
-      const match = candidates.find(c =>
+      const match = safeCandidates.find(c =>
         (c.waChatId && threadKeyFromChat(c.waChatId) === key) ||
         (phoneKey(c.phone) !== '' && phoneKey(c.phone) === phoneKey(lead.phone))
       )
@@ -278,7 +306,7 @@ export function buildWaThreads(candidates: Candidate[], inbox: WaInboxLead[]): W
   const threads: WaThread[] = []
   byKey.forEach((slot, key) => {
     const { candidate, lead } = slot
-    const messages = mergeWaMessages(candidate?.waMessages, lead?.messages)
+    const messages = mergeWaMessages(candidate?.waMessages, asList(lead?.messages))
     if (!messages.length) return
     const phone = toLocalPhone(candidate?.phone || lead?.phone || '') || (lead?.phone || candidate?.phone || '')
     const chatId = candidate?.waChatId || lead?.chatId || toWhatsAppChatId(phone)
@@ -304,7 +332,7 @@ export function buildWaThreads(candidates: Candidate[], inbox: WaInboxLead[]): W
     })
   })
 
-  threads.sort((a, b) => (b.lastAt || '').localeCompare(a.lastAt || ''))
+  threads.sort((a, b) => timeOf(b.lastAt).localeCompare(timeOf(a.lastAt)))
   return threads
 }
 

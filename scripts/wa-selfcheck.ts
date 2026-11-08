@@ -102,4 +102,20 @@ assert.equal(threads.length, 2)
 assert.equal(threads[0].kind, 'lead')
 assert.equal(threads[1].kind, 'candidate')
 
+const oldCandidate = {
+  ...base, id: 'old', name: 'ישן', phone: '0520000000', waMessages: undefined, waChatId: undefined, lastWaAt: undefined,
+}
+const broken = buildWaThreads(
+  [oldCandidate, {
+    ...base,
+    id: 'broken',
+    phone: '0533333333',
+    waMessages: [{ id: 'x' }, { id: 'y', text: 12, timestamp: undefined }],
+  }] as Candidate[],
+  null as unknown as [],
+)
+assert.equal(broken.length, 1)
+assert.equal(broken[0].messages.length, 2)
+assert.equal(mergeCandidateSave(oldCandidate, { ...oldCandidate, city: 'עכו' }).city, 'עכו')
+
 console.log('wa selfcheck ok')

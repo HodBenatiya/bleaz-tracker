@@ -1,5 +1,5 @@
-import { toWhatsAppChatId } from '../src/utils/wa'
-import { messageIdOf, type ParsedMessage } from '../src/utils/waParse'
+import { toWhatsAppChatId } from '../src/utils/wa.js'
+import { messageIdOf, type ParsedMessage } from '../src/utils/waParse.js'
 
 export type ProviderName = 'waha' | 'greenapi'
 

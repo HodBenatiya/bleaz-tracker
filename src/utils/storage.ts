@@ -144,8 +144,9 @@ export async function loadWaInbox(): Promise<WaInboxLoad> {
   const rows: WaInboxLead[] = []
   let session: WaSessionState | null = null
   for (const row of data ?? []) {
-    const item = row.data as WaInboxLead & Partial<WaSessionState>
-    if (item?.id === 'wa_session' || item?.kind === 'session') {
+    const item = row.data as (WaInboxLead & Partial<WaSessionState>) | null
+    if (!item || typeof item !== 'object') continue
+    if (item.id === 'wa_session' || item.kind === 'session') {
       session = item as WaSessionState
       continue
     }
