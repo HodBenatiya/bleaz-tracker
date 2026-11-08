@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeCandidateSave, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
-import { parseProviderWebhook } from '../src/utils/waParse'
+import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
+import { messageIdOf, parseProviderWebhook } from '../src/utils/waParse'
 import type { Candidate } from '../src/types'
 
 assert.equal(toLocalPhone('972521234567'), '0521234567')
@@ -156,6 +156,47 @@ const lidThreads = buildWaThreads([], [{
 assert.equal(lidThreads.length, 1)
 assert.equal(lidThreads[0].title, 'יוסי')
 assert.equal(lidThreads[0].phoneLabel, 'מאתר מספר…')
+
+const named = buildWaThreads([], [{
+  id: 'wa_521112233',
+  phone: '0521112233',
+  chatId: '972521112233@c.us',
+  name: '0521112233',
+  pushName: 'מאיה',
+  pictureUrl: 'https://pps.whatsapp.net/v/t61/photo.jpg',
+  provider: 'waha',
+  messages: [{ id: 'n1', direction: 'in', text: 'היי', timestamp: '2026-05-01T00:00:00.000Z', type: 'text', source: 'waha' }],
+  unread: 0,
+  lastMessageAt: '2026-05-01T00:00:00.000Z',
+  createdAt: '2026-05-01T00:00:00.000Z',
+  updatedAt: '2026-05-01T00:00:00.000Z',
+}])
+assert.equal(named[0].title, 'מאיה')
+assert.equal(named[0].phoneLabel, '052-1112233')
+assert.equal(named[0].avatarUrl, 'https://pps.whatsapp.net/v/t61/photo.jpg')
+
+const pushed = parseProviderWebhook({
+  event: 'message',
+  payload: {
+    id: 'false_972521112233@c.us_P',
+    timestamp: 1700000000,
+    from: '972521112233@c.us',
+    fromMe: false,
+    body: 'שלום',
+    _data: { Info: { PushName: 'מאיה כהן' } },
+  },
+})
+assert.equal(pushed.kind, 'message')
+if (pushed.kind === 'message') assert.equal(pushed.message.senderName, 'מאיה כהן')
+
+assert.equal(messageIdOf({ key: { id: '3EB0AAA', remoteJid: '972521111111@c.us', fromMe: true } }), 'true_972521111111@c.us_3EB0AAA')
+assert.equal(messageKey('true_972521111111@c.us_3EB0AAA'), '3EB0AAA')
+const once = mergeWaMessages(
+  [{ id: 'local_1', direction: 'out', text: 'היי', timestamp: '2026-06-01T00:00:00.000Z', type: 'text', source: 'waha' }],
+  [{ id: 'true_972521111111@c.us_3EB0AAA', direction: 'out', text: 'היי', timestamp: '2026-06-01T00:00:20.000Z', type: 'text', source: 'waha' }],
+)
+assert.equal(once.length, 1)
+assert.equal(once[0].id, 'true_972521111111@c.us_3EB0AAA')
 
 const own = buildWaThreads([], [{
   id: 'wa_lid82077663920366',

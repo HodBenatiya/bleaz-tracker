@@ -113,6 +113,71 @@ export async function resolveWahaPhone(lid: string, session?: string): Promise<s
   }
 }
 
+function nameFromContact(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  const row = data as Record<string, unknown>
+  for (const field of ['pushname', 'pushName', 'notifyName', 'name', 'shortName', 'verifiedName']) {
+    const value = row[field]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function pictureFromContact(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null
+  const row = data as Record<string, unknown>
+  for (const field of ['profilePictureURL', 'profilePictureUrl', 'url']) {
+    const value = row[field]
+    if (typeof value === 'string' && value.startsWith('http')) return value
+  }
+  return null
+}
+
+function safePictureUrl(url: string | null, wahaBase: string): string | null {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
+    const wahaHost = new URL(wahaBase).host
+    if (parsed.host === wahaHost) return null
+    parsed.searchParams.delete('x-api-key')
+    parsed.searchParams.delete('X-Api-Key')
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+export interface WahaContactCard {
+  name: string
+  pictureUrl: string | null
+}
+
+/** Contact name and profile photo. Picture URLs from WhatsApp expire; callers refresh them. */
+export async function fetchWahaContactCard(contactId: string, session?: string): Promise<WahaContactCard | null> {
+  let creds: { base: string; key: string; session: string }
+  try { creds = wahaCreds() } catch { return null }
+  if (!contactId) return null
+  const useSession = session || creds.session
+  const query = `contactId=${encodeURIComponent(contactId)}&session=${encodeURIComponent(useSession)}`
+  const headers = wahaHeaders(creds.key)
+  try {
+    const [infoRes, picRes] = await Promise.all([
+      fetch(`${creds.base}/api/contacts?${query}`, { headers, signal: AbortSignal.timeout(8000) }).catch(() => null),
+      fetch(`${creds.base}/api/contacts/profile-picture?${query}`, { headers, signal: AbortSignal.timeout(8000) }).catch(() => null),
+    ])
+    let name = ''
+    if (infoRes?.ok) name = nameFromContact(await infoRes.json().catch(() => null))
+    let pictureUrl: string | null = null
+    if (picRes?.ok) pictureUrl = safePictureUrl(pictureFromContact(await picRes.json().catch(() => null)), creds.base)
+    if (!name && pictureUrl === null && !infoRes?.ok && !picRes?.ok) return null
+    return { name, pictureUrl }
+  } catch (err) {
+    console.error('contact profile', redactError(err))
+    return null
+  }
+}
+
 async function postJson(url: string, body: unknown, headers: Record<string, string>): Promise<{ ok: boolean; status: number; data: any }> {
   const resp = await fetch(url, {
     method: 'POST',
@@ -151,12 +216,11 @@ async function sendWaha(chatId: string, text: string): Promise<{ id: string }> {
     text,
     linkPreview: false,
   }, key ? { 'X-Api-Key': key } : {})
-  if (!ok) {
+  if (status < 200 || status >= 300) {
     const msg = data?.message || data?.error || data?.exception || `waha ${status}`
     throw new Error(redactError(new Error(String(msg))))
   }
-  const id = messageIdOf(data?.id) || messageIdOf(data)
-  if (!id) throw new Error('waha send returned no message id')
+  const id = messageIdOf(data) || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   return { id }
 }
 

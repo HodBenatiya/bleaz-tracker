@@ -207,8 +207,13 @@ function WaInboxScreen({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || data.ok === false) {
-        setSendError(typeof data.error === 'string' ? data.error : 'השליחה נכשלה. נסו שוב.')
-        if (data.sent && data.message) appendLocal(data.message)
+        if (data.sent) {
+          setDraft('')
+          if (data.message) appendLocal(data.message)
+          return
+        }
+        const detail = typeof data.detail === 'string' ? data.detail.trim() : ''
+        setSendError(detail || (typeof data.error === 'string' ? data.error : 'השליחה נכשלה. נסו שוב.'))
         return
       }
       setDraft('')
@@ -356,16 +361,15 @@ function WaInboxScreen({
               onClick={() => { setSelectedKey(t.key); setAssignOpen(false); setSendError('') }}
               className={`w-full text-right px-3 py-3 flex gap-3 border-b border-slate-100 hover:bg-[#f5f6f6] ${selectedKey === t.key ? 'bg-[#f0f2f5]' : 'bg-white'}`}
             >
-              <div className="w-11 h-11 rounded-full bg-[#dfe5e7] text-[#54656f] flex items-center justify-center font-bold shrink-0">
-                {t.title.slice(0, 1)}
-              </div>
+              <ContactAvatar name={t.title} url={t.avatarUrl} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className={`truncate ${t.unread > 0 ? 'font-bold text-slate-900' : 'font-medium text-slate-800'}`}>{t.title}</span>
+                  <span className="text-[11px] text-slate-500 shrink-0">{t.phoneLabel}</span>
                   <span className="mr-auto text-[11px] text-slate-400 shrink-0">{formatListTime(t.lastAt)}</span>
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <p className={`truncate text-sm ${t.unread > 0 ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{t.preview || t.phoneLabel}</p>
+                  <p className={`truncate text-sm ${t.unread > 0 ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{t.preview}</p>
                   {t.unread > 0 && (
                     <span className="mr-auto min-w-5 h-5 px-1 rounded-full bg-[#25d366] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
                       {t.unread}
@@ -394,6 +398,7 @@ function WaInboxScreen({
               <button className="md:hidden p-1" onClick={() => setSelectedKey(null)} aria-label="חזרה">
                 <ArrowRight size={18} />
               </button>
+              <ContactAvatar name={selected.title} url={selected.avatarUrl} small />
               <div className="min-w-0 flex-1">
                 <p className="font-bold truncate">{selected.title}</p>
                 <p className="text-[11px] text-white/80 truncate">{selected.phoneLabel}{selected.candidate?.city ? ` · ${selected.candidate.city}` : ''}</p>
@@ -505,6 +510,16 @@ function WaInboxScreen({
       </section>
     </div>
   )
+}
+
+function ContactAvatar({ name, url, small }: { name: string; url?: string; small?: boolean }) {
+  const [failed, setFailed] = useState(false)
+  const size = small ? 'w-9 h-9 text-sm' : 'w-11 h-11'
+  const initial = name.trim().slice(0, 1) || '?'
+  if (url && !failed) {
+    return <img src={url} alt="" className={`${size} rounded-full object-cover shrink-0 bg-[#dfe5e7]`} onError={() => setFailed(true)} />
+  }
+  return <div className={`${size} rounded-full bg-[#dfe5e7] text-[#54656f] flex items-center justify-center font-bold shrink-0`}>{initial}</div>
 }
 
 function groupMessages(messages: WaMessage[]): Array<{ day: string; messages: WaMessage[] }> {

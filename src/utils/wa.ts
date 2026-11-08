@@ -169,6 +169,33 @@ export function preferDeliveryStatus(prev?: WaDeliveryStatus, next?: WaDeliveryS
   return DELIVERY_RANK[next] >= DELIVERY_RANK[prev] ? next : prev
 }
 
+/** true_9725...@c.us_3EB0 and 3EB0 are the same WhatsApp message. */
+export function messageKey(id: string | undefined): string {
+  const raw = String(id || '')
+  const parts = raw.split('_')
+  if ((parts[0] === 'true' || parts[0] === 'false') && parts.length >= 3) return parts.slice(2).join('_')
+  return raw
+}
+
+function sameOutgoing(a: WaMessage, b: WaMessage): boolean {
+  if (a.direction !== 'out' || b.direction !== 'out') return false
+  if ((a.text || '') !== (b.text || '')) return false
+  if (messageKey(a.id) && messageKey(a.id) === messageKey(b.id)) return true
+  const local = a.id.startsWith('local_') || b.id.startsWith('local_')
+  if (!local) return false
+  const left = Date.parse(a.timestamp)
+  const right = Date.parse(b.timestamp)
+  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) < 2 * 60 * 1000
+}
+
+function preferMessageId(a: string, b: string): string {
+  const aFull = /^(true|false)_/.test(a)
+  const bFull = /^(true|false)_/.test(b)
+  if (aFull !== bFull) return aFull ? a : b
+  if (a.startsWith('local_') !== b.startsWith('local_')) return a.startsWith('local_') ? b : a
+  return b || a
+}
+
 function asList<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : []
 }
@@ -199,11 +226,25 @@ export function mergeWaMessages(a?: WaMessage[] | null, b?: WaMessage[] | null):
       text: textOf(m.text),
       timestamp: timeOf(m.timestamp) || timeOf(m.at) || timeOf(m.createdAt),
     }
-    const prev = map.get(next.id)
-    if (!prev) { map.set(next.id, next); return }
-    map.set(next.id, {
+    const key = messageKey(next.id)
+    let slot = key
+    let prev = map.get(key)
+    if (!prev) {
+      for (const [otherKey, existing] of map) {
+        if (sameOutgoing(existing, next)) {
+          prev = existing
+          map.delete(otherKey)
+          slot = messageKey(preferMessageId(existing.id, next.id))
+          break
+        }
+      }
+    }
+    if (!prev) { map.set(key, next); return }
+    const id = preferMessageId(prev.id, next.id)
+    map.set(slot, {
       ...prev,
       ...next,
+      id,
       text: next.text || prev.text,
       timestamp: next.timestamp || prev.timestamp,
       fileUrl: next.fileUrl || prev.fileUrl,
@@ -326,7 +367,7 @@ export function messagePreview(m: WaMessage | undefined): string {
   return caption ? `${label} · ${caption}` : label
 }
 
-function personName(name: unknown, phone: string): string {
+export function personName(name: unknown, phone: string): string {
   const n = textOf(name).trim()
   if (!n) return ''
   if (phoneKey(n) && phoneKey(n) === phoneKey(phone)) return ''
@@ -349,6 +390,7 @@ export interface WaThread {
   lid: boolean
   unresolved: boolean
   phoneLabel: string
+  avatarUrl?: string
 }
 
 export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox: WaInboxLead[] | null | undefined): WaThread[] {
@@ -413,7 +455,7 @@ export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox
     const lastMsg = messages[messages.length - 1]
     const lastAt = laterIso(candidate?.lastWaAt, lead?.lastMessageAt, lastMsg?.timestamp) || ''
     const leadUnread = lead && lead.candidateId ? 0 : (lead?.unread ?? 0)
-    const named = personName(candidate?.name, phone) || personName(lead?.name, phone)
+    const named = personName(lead?.pushName, phone) || personName(lead?.name, phone) || personName(candidate?.name, phone)
     const phoneLabel = unresolved ? 'מאתר מספר…' : (formatPhoneDisplay(phone) || 'מאתר מספר…')
     const title = named || phoneLabel
     const outbound = lastMsg?.direction === 'out'
@@ -433,6 +475,7 @@ export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox
       lid: key.indexOf('lid') === 0 || unresolved,
       unresolved,
       phoneLabel,
+      avatarUrl: lead?.pictureUrl || undefined,
     })
   })
 
