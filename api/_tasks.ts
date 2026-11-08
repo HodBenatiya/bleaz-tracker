@@ -1,5 +1,5 @@
-import { db } from './_db'
-import { sendNotify } from './_provider'
+import { db } from './_db.js'
+import { sendNotify } from './_provider.js'
 
 function israelNow() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }))

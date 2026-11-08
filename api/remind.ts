@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
-import { ingestWebhookBody } from './_ingest'
-import { drainGreenInbox, sendNotify } from './_provider'
-import { captureTaskCommand } from './_tasks'
+import { ingestWebhookBody } from './_ingest.js'
+import { drainGreenInbox, sendNotify } from './_provider.js'
+import { captureTaskCommand } from './_tasks.js'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL!,

@@ -1,5 +1,5 @@
-import { ingestWebhookBody } from './_ingest'
-import { providerName, redactError } from './_provider'
+import { ingestWebhookBody } from './_ingest.js'
+import { providerName, redactError } from './_provider.js'
 
 function authorized(req: { headers?: Record<string, string | string[] | undefined>; query?: Record<string, unknown> }): boolean {
   const expected = process.env.WA_WEBHOOK_TOKEN || ''

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowRight, CheckCheck, FileText, Loader2, MapPin, Search, Send } from 'lucide-react'
 import type { Candidate, CandidateStatus, SavedPosition, WaInboxLead, WaMessage, WaSessionState } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
@@ -77,7 +77,31 @@ function ticks(status?: WaMessage['status']) {
   return <span className="text-[10px] text-[#667781]">✓</span>
 }
 
-export default function WaInbox({
+class WaErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="m-6 rounded-xl border border-amber-200 bg-amber-50 p-6 text-amber-950" dir="rtl">
+          <p className="font-bold">לא הצלחנו להציג את השיחות</p>
+          <p className="text-sm mt-1">רעננו את הדף. השיחות הקיימות לא נמחקו.</p>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+export default function WaInbox(props: Props) {
+  return (
+    <WaErrorBoundary>
+      <WaInboxScreen {...props} />
+    </WaErrorBoundary>
+  )
+}
+
+function WaInboxScreen({
   candidates, positions, inbox, session, inboxError,
   onCandidatesChange, onPatchCandidate, onPatchInbox,
 }: Props) {
@@ -268,7 +292,7 @@ export default function WaInbox({
   const choices = shownPositions.filter(p => p.isActive || chosen.includes(p.id))
 
   return (
-    <div className="flex h-full bg-[#efeae2]" dir="rtl">
+    <div className="flex h-full min-h-[calc(100vh-4.5rem)] bg-[#efeae2]" dir="rtl">
       <aside className={`${selected ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] shrink-0 flex-col bg-white border-l border-[#d1d7db]`}>
         <div className="px-4 pt-4 pb-3 bg-[#075e54] text-white">
           <div className="flex items-center justify-between">
