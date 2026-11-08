@@ -76,6 +76,36 @@ export function placementOverlapsRange(candidate: Pick<Candidate, 'status' | 'cr
   return `${month}-01` <= end && monthEnd(month) >= start
 }
 
+export type SpendPlacementKind = 'out' | 'dated' | 'month' | 'withheld'
+
+function rangeCoversMonth(start: string, end: string, month: string): boolean {
+  return start <= `${month}-01` && end >= monthEnd(month)
+}
+
+/**
+ * ROI must not treat a YYYY-MM override as a single day.
+ * Dated placements (no manual month) count only when their day is inside the range.
+ * A manual month counts only when that whole month sits inside the range.
+ * Otherwise a touched manual month is withheld from the ratio.
+ */
+export function classifyPlacementForSpendRange(
+  candidate: Pick<Candidate, 'status' | 'createdAt' | 'startDate' | 'interviewDate' | 'interviewHistory' | 'updatedAt' | 'attributionMonth'>,
+  start: string,
+  end: string,
+): SpendPlacementKind {
+  if (!isPlacement(candidate) || !start || !end) return 'out'
+  const attribution = placementAttribution(candidate)
+  if (attribution.manual) {
+    if (!attribution.month) return 'out'
+    if (rangeCoversMonth(start, end, attribution.month)) return 'month'
+    if (placementOverlapsRange(candidate, start, end)) return 'withheld'
+    return 'out'
+  }
+  const day = candidateAnchor(candidate).day
+  if (day && day >= start && day <= end) return 'dated'
+  return 'out'
+}
+
 /** Changes only attributionMonth. Passing null removes a manual override. */
 export function withAttributionMonth<T extends { attributionMonth?: string }>(candidate: T, month: string | null): T {
   const next = { ...candidate }

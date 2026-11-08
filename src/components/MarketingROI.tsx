@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { DailyReport, Candidate, SavedPosition } from '../types'
 import { todayISO, toISODate } from '../utils/helpers'
-import { candidateAnchor, placementOverlapsRange } from '../utils/candidateAnchor'
+import { candidateAnchor, classifyPlacementForSpendRange } from '../utils/candidateAnchor'
 
 interface Props {
   reports:    DailyReport[]
@@ -147,13 +147,20 @@ export default function MarketingROI({ reports, candidates }: Props) {
   const sourceRows   = buildSourceFunnel(rangedCandidates)
   const campaignRows = buildCampaignRows(rangedReports)
 
+  const placementKinds = candidates.map(candidate => classifyPlacementForSpendRange(candidate, range.start, range.end))
+  const datedPlacements = placementKinds.filter(kind => kind === 'dated').length
+  const monthPlacements = placementKinds.filter(kind => kind === 'month').length
+  const withheldPlacements = placementKinds.filter(kind => kind === 'withheld').length
   const totalSpend   = campaignRows.reduce((s, r) => s + r.spend, 0)
   const totalLeads   = campaignRows.reduce((s, r) => s + r.leads, 0)
-  const totalPlaced  = candidates.filter(candidate => placementOverlapsRange(candidate, range.start, range.end)).length
+  const totalPlaced  = datedPlacements + monthPlacements
   const totalRevenue = totalPlaced * PLACEMENT_VALUE
   const totalROI     = totalSpend > 0 ? ((totalRevenue - totalSpend) / totalSpend) * 100 : 0
   const cpl          = totalLeads  > 0 ? totalSpend / totalLeads  : 0
   const cpp          = totalPlaced > 0 ? totalSpend / totalPlaced : 0
+  const placedSub = monthPlacements > 0
+    ? `יום יצירה + ${monthPlacements} שיוך לחודש מלא`
+    : 'לפי יום יצירה'
 
   const candTotal    = rangedCandidates.length
   const candPlaced   = rangedCandidates.filter(c => c.status === 'placement_complete').length
@@ -211,6 +218,16 @@ export default function MarketingROI({ reports, candidates }: Props) {
         {fallbackCount > 0 && (
           <p className="text-[11px] text-amber-700 mt-3">{fallbackCount} מועמדים בלי תאריך יצירה נספרו לפי התאריך המוקדם ביותר שיש להם.</p>
         )}
+        {withheldPlacements > 0 && (
+          <p className="text-[11px] text-amber-800 mt-3 leading-relaxed">
+            {withheldPlacements} השמות שויכו ידנית לחודש בלבד, בלי יום מדויק. הן לא נכנסות ל-ROI ולעלות להשמה בטווח הזה, כדי לא להשוות הוצאה יומית או חלקית לכל ההשמות של החודש. בחרו את החודש המלא כדי לכלול אותן.
+          </p>
+        )}
+        {monthPlacements > 0 && (
+          <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+            נכללו {monthPlacements} השמות עם שיוך ידני, כי החודש שלהן נמצא במלואו בטווח.
+          </p>
+        )}
       </div>
 
       {/* ── KPI cards ── */}
@@ -218,12 +235,14 @@ export default function MarketingROI({ reports, candidates }: Props) {
         <KPI label="הוצאה"  value={`₪${totalSpend.toLocaleString('he-IL')}`}                          sub={range.label}        color="text-slate-700" />
         <KPI label="סה״כ לידים"  value={totalLeads.toLocaleString()}                                  sub="נכנסו מהמודעות"      color="text-blue-600" />
         <KPI label="עלות לליד"   value={cpl > 0 ? `₪${cpl.toFixed(0)}` : '—'}                       sub="CPL"                 color="text-slate-700" />
-        <KPI label="הוצבו"        value={totalPlaced.toString()}                                      sub="לפי חודש שיוך"       color="text-emerald-600" />
+        <KPI label="הוצבו"        value={totalPlaced.toString()}                                      sub={placedSub}            color="text-emerald-600" />
         <KPI label="הכנסה"        value={`₪${totalRevenue.toLocaleString()}`}                         sub={`${totalPlaced} × ₪5,000`} color="text-green-600" />
         <KPI
           label="ROI"
           value={totalROI > 0 ? `${totalROI.toFixed(0)}%` : '—'}
-          sub={cpp > 0 ? `₪${cpp.toFixed(0)} לביצוע` : 'אין הצבות עדיין'}
+          sub={cpp > 0
+            ? `₪${cpp.toFixed(0)} לביצוע${withheldPlacements > 0 ? ' · בלי שיוך חלקי' : ''}`
+            : withheldPlacements > 0 ? 'בלי שיוך חודשי חלקי' : 'אין הצבות עדיין'}
           color={totalROI > 0 ? 'text-emerald-600' : 'text-slate-400'}
         />
       </div>
