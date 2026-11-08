@@ -57,6 +57,28 @@ function wahaCreds() {
   }
 }
 
+/** GET /api/{session}/lids/{lid} → { pn }. pn may be null when WAHA has no mapping. */
+export async function resolveWahaLid(lid: string, session?: string): Promise<string | null> {
+  let creds: { base: string; key: string; session: string }
+  try { creds = wahaCreds() } catch { return null }
+  const id = lid.replace(/@lid$/i, '')
+  if (!id) return null
+  const useSession = session || creds.session
+  const url = `${creds.base}/api/${encodeURIComponent(useSession)}/lids/${encodeURIComponent(id)}`
+  try {
+    const resp = await fetch(url, {
+      headers: { Accept: 'application/json', ...(creds.key ? { 'X-Api-Key': creds.key } : {}) },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!resp.ok) return null
+    const data = await resp.json().catch(() => null) as { pn?: string | null } | null
+    return typeof data?.pn === 'string' && data.pn ? data.pn : null
+  } catch (err) {
+    console.error('lid lookup', redactError(err))
+    return null
+  }
+}
+
 async function postJson(url: string, body: unknown, headers: Record<string, string>): Promise<{ ok: boolean; status: number; data: any }> {
   const resp = await fetch(url, {
     method: 'POST',

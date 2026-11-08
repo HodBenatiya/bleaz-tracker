@@ -1,4 +1,4 @@
-import { ingestWebhookBody } from './_ingest.js'
+import { ingestWebhookBody, repairLidInbox } from './_ingest.js'
 import { providerName, redactError } from './_provider.js'
 
 function authorized(req: { headers?: Record<string, string | string[] | undefined>; query?: Record<string, unknown> }): boolean {
@@ -21,6 +21,9 @@ export default async function handler(req: any, res: any) {
   if (!authorized(req)) return res.status(401).json({ error: 'unauthorized' })
 
   const body = req.body ?? {}
+  if (providerName() === 'waha' && body?.typeWebhook) {
+    return res.status(200).json({ ok: true, action: 'ignored-green' })
+  }
   const session = typeof body.session === 'string' ? body.session : ''
   const expectedSession = process.env.WAHA_SESSION
   if (session && expectedSession && session !== expectedSession) {
@@ -29,7 +32,10 @@ export default async function handler(req: any, res: any) {
 
   try {
     const result = await ingestWebhookBody(body, { downloadFiles: true, captureTasks: true })
-    return res.status(200).json({ ok: true, ...result })
+    let repaired = 0
+    try { repaired = await repairLidInbox(session || undefined) }
+    catch (err) { console.error('lid repair', redactError(err)) }
+    return res.status(200).json({ ok: true, ...result, repaired })
   } catch (err) {
     const detail = redactError(err)
     console.error('wa-webhook', detail)
