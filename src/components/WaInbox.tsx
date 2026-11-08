@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowRight, CheckCheck, FileText, Loader2, MapPin, Search, Send } from 'lucide-react'
+import { ArrowRight, Camera, CheckCheck, FileText, Loader2, MapPin, Mic, Paperclip, Search, Send, Smile, X } from 'lucide-react'
 import type { Candidate, CandidateStatus, SavedPosition, WaInboxLead, WaMessage, WaSessionState } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
@@ -126,7 +126,20 @@ function WaInboxScreen({
   const [phoneOverride, setPhoneOverride] = useState('')
   const [status, setStatus] = useState<CandidateStatus>('screening')
   const [chosen, setChosen] = useState<string[]>([])
+  const [attachment, setAttachment] = useState<{ file: File; url: string; kind: 'image' | 'video' | 'file' } | null>(null)
+  const [recording, setRecording] = useState(false)
+  const [recordMs, setRecordMs] = useState(0)
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  const [progress, setProgress] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const recordStarted = useRef(0)
+  const holdTimer = useRef<number | null>(null)
+  const recordingLive = useRef(false)
+  const skipMicClick = useRef(false)
 
   const visible = threads.filter(t => {
     if (filter === 'unread' && t.unread <= 0) return false
@@ -194,21 +207,96 @@ function WaInboxScreen({
     }
   }
 
-  const send = async () => {
+  const clearAttachment = () => {
+    setAttachment(prev => {
+      if (prev) URL.revokeObjectURL(prev.url)
+      return null
+    })
+  }
+
+  const pickFile = (file: File, kind: 'image' | 'video' | 'file') => {
+    if (file.size > 3 * 1024 * 1024) {
+      setSendError('הקובץ גדול מדי. עד 3MB.')
+      return
+    }
+    clearAttachment()
+    setAttachment({ file, url: URL.createObjectURL(file), kind })
+  }
+
+  const fileToBase64 = (file: Blob) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '')
+    reader.onerror = () => reject(new Error('read failed'))
+    reader.readAsDataURL(file)
+  })
+
+  const stopRecorder = () => {
+    const rec = recorderRef.current
+    if (rec && rec.state !== 'inactive') rec.stop()
+  }
+
+  const startRecording = async () => {
+    if (recordingLive.current || !selected) return
+    recordingLive.current = true
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (!recordingLive.current) {
+        stream.getTracks().forEach(track => track.stop())
+        return
+      }
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+      const rec = new MediaRecorder(stream, { mimeType: mime })
+      chunksRef.current = []
+      rec.ondataavailable = e => { if (e.data.size) chunksRef.current.push(e.data) }
+      recorderRef.current = rec
+      recordStarted.current = Date.now()
+      setRecordMs(0)
+      setRecording(true)
+      rec.start()
+    } catch (err) {
+      recordingLive.current = false
+      setRecording(false)
+      throw err
+    }
+  }
+
+  const cancelRecording = () => {
+    recordingLive.current = false
+    stopRecorder()
+    chunksRef.current = []
+    setRecording(false)
+    setRecordMs(0)
+  }
+
+  const send = async (voiceBlob?: Blob) => {
     const text = draft.trim()
-    if (!text || !selected || sending) return
+    if (!selected || sending) return
+    if (!text && !attachment && !voiceBlob) return
     setSending(true)
     setSendError('')
+    setProgress(voiceBlob || attachment ? 'שולח קובץ…' : '')
     try {
+      const body: Record<string, unknown> = { phone: selected.phone, text, chatId: selected.chatId }
+      if (voiceBlob) {
+        body.media = { kind: 'voice', filename: 'voice.webm', mimetype: voiceBlob.type || 'audio/webm', data: await fileToBase64(voiceBlob) }
+      } else if (attachment) {
+        body.media = {
+          kind: attachment.kind,
+          filename: attachment.file.name,
+          mimetype: attachment.file.type || 'application/octet-stream',
+          data: await fileToBase64(attachment.file),
+        }
+      }
       const res = await fetch('/api/wa-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: selected.phone, text, chatId: selected.chatId }),
+        body: JSON.stringify(body),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || data.ok === false) {
         if (data.sent) {
           setDraft('')
+          clearAttachment()
           if (data.message) appendLocal(data.message)
           return
         }
@@ -217,12 +305,54 @@ function WaInboxScreen({
         return
       }
       setDraft('')
+      clearAttachment()
       if (data.message) appendLocal(data.message)
     } catch {
       setSendError('השליחה נכשלה. נסו שוב.')
     } finally {
       setSending(false)
+      setProgress('')
     }
+  }
+
+  useEffect(() => {
+    if (!recording) return
+    const timer = window.setInterval(() => setRecordMs(Date.now() - recordStarted.current), 200)
+    return () => window.clearInterval(timer)
+  }, [recording])
+
+  const finishRecording = async (sendNow: boolean) => {
+    if (!recordingLive.current && !recorderRef.current) return
+    recordingLive.current = false
+    const rec = recorderRef.current
+    recorderRef.current = null
+    setRecording(false)
+    setRecordMs(0)
+    if (!rec) return
+    const blob = await new Promise<Blob>(resolve => {
+      rec.onstop = () => {
+        rec.stream.getTracks().forEach(track => track.stop())
+        resolve(new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' }))
+      }
+      if (rec.state !== 'inactive') rec.stop()
+      else resolve(new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' }))
+    })
+    if (sendNow && blob.size > 0) await send(blob)
+  }
+
+  const snapFromCamera = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+    const video = document.createElement('video')
+    video.srcObject = stream
+    await video.play()
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
+    canvas.getContext('2d')?.drawImage(video, 0, 0)
+    stream.getTracks().forEach(track => track.stop())
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(b => resolve(b), 'image/jpeg', 0.9))
+    if (!blob) return
+    pickFile(new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' }), 'image')
   }
 
   const openAssign = (thread: WaThread) => {
@@ -485,19 +615,85 @@ function WaInboxScreen({
             </div>
 
             <div className="bg-[#f0f2f5] px-3 py-2 shrink-0">
+              {progress && <p className="text-xs text-[#075e54] px-2 pb-1">{progress}</p>}
               {sendError && <p className="text-xs text-red-600 px-2 pb-1">{sendError}</p>}
-              <div className="flex items-end gap-2">
+              {attachment && (
+                <div className="mb-2 flex items-center gap-2 bg-white rounded-xl p-2">
+                  {attachment.kind === 'image'
+                    ? <img src={attachment.url} alt="" className="w-14 h-14 object-cover rounded-lg" />
+                    : attachment.kind === 'video'
+                      ? <video src={attachment.url} className="w-24 h-14 rounded-lg bg-black" />
+                      : <span className="text-xs text-slate-600 truncate flex-1">{attachment.file.name}</span>}
+                  <button type="button" onClick={clearAttachment} className="text-slate-400" aria-label="בטל קובץ"><X size={16} /></button>
+                </div>
+              )}
+              {emojiOpen && (
+                <div className="mb-2 flex flex-wrap gap-1 bg-white rounded-xl p-2 max-h-24 overflow-y-auto">
+                  {['😀','😁','😂','🙂','😉','😍','🙏','👍','👎','❤️','🔥','✅','📞','📎','🎉','😢','🤔','👋'].map(emoji => (
+                    <button key={emoji} type="button" className="text-xl" onClick={() => setDraft(value => value + emoji)}>{emoji}</button>
+                  ))}
+                </div>
+              )}
+              {recording && (
+                <div className="mb-2 flex items-center gap-2 text-sm text-red-600">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  מקליט {Math.floor(recordMs / 1000)} שנ׳
+                  <button type="button" className="text-slate-500" onClick={cancelRecording}>ביטול</button>
+                  <button type="button" className="font-semibold" onClick={() => finishRecording(true)}>שליחה</button>
+                </div>
+              )}
+              <div className="flex items-end gap-1.5">
+                <input ref={fileRef} type="file" accept="image/*,video/*,.pdf,.doc,.docx,application/pdf" className="hidden" onChange={e => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ''
+                  if (!file) return
+                  const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file'
+                  pickFile(file, kind)
+                }} />
+                <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ''
+                  if (file) pickFile(file, 'image')
+                }} />
+                <button type="button" className="w-9 h-9 text-slate-500 flex items-center justify-center" aria-label="צרף קובץ" onClick={() => fileRef.current?.click()}><Paperclip size={18} /></button>
+                <button type="button" className="w-9 h-9 text-slate-500 flex items-center justify-center" aria-label="מצלמה" onClick={() => {
+                  const fine = window.matchMedia('(pointer: coarse)').matches
+                  if (fine) cameraRef.current?.click()
+                  else snapFromCamera().catch(() => cameraRef.current?.click())
+                }}><Camera size={18} /></button>
+                <button type="button" className="w-9 h-9 text-slate-500 flex items-center justify-center" aria-label="אימוג׳י" onClick={() => setEmojiOpen(open => !open)}><Smile size={18} /></button>
+                <button
+                  type="button"
+                  className={`w-9 h-9 flex items-center justify-center ${recording ? 'text-red-600' : 'text-slate-500'}`}
+                  aria-label="הקלטה"
+                  onPointerDown={() => { holdTimer.current = window.setTimeout(() => { startRecording().catch(err => setSendError(err instanceof Error ? err.message : 'אין גישה למיקרופון')) }, 280) }}
+                  onPointerUp={() => {
+                    if (holdTimer.current) window.clearTimeout(holdTimer.current)
+                    if (recordingLive.current && Date.now() - recordStarted.current > 400) {
+                      skipMicClick.current = true
+                      finishRecording(true)
+                    }
+                  }}
+                  onClick={() => {
+                    if (skipMicClick.current) { skipMicClick.current = false; return }
+                    if (recordingLive.current) { finishRecording(true); return }
+                    startRecording().catch(err => {
+                      recordingLive.current = false
+                      setSendError(err instanceof Error ? err.message : 'אין גישה למיקרופון')
+                    })
+                  }}
+                ><Mic size={18} /></button>
                 <textarea
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
                   rows={1}
-                  placeholder="הודעה"
+                  placeholder={attachment ? 'כיתוב (לא חובה)' : 'הודעה'}
                   className="flex-1 rounded-2xl px-4 py-2 text-sm resize-none outline-none bg-white max-h-28"
                 />
                 <button
-                  onClick={send}
-                  disabled={sending || !draft.trim()}
+                  onClick={() => send()}
+                  disabled={sending || (!draft.trim() && !attachment)}
                   className="w-10 h-10 rounded-full bg-[#25d366] text-white flex items-center justify-center disabled:opacity-40 shrink-0"
                   aria-label="שליחה"
                 >
@@ -553,27 +749,40 @@ function Bubble({ message }: { message: WaMessage }) {
   )
 }
 
+function mediaSrc(message: WaMessage): string {
+  if (message.fileUrl?.startsWith('/api/wa-media')) return message.fileUrl
+  if (message.fileUrl && /^https?:\/\//.test(message.fileUrl) && !message.fileUrl.includes('/api/files/')) return message.fileUrl
+  return `/api/wa-media?id=${encodeURIComponent(message.id)}`
+}
+
 function Media({ message }: { message: WaMessage }) {
-  if (!message.fileUrl && message.type === 'text') return null
+  const [zoom, setZoom] = useState(false)
+  const [failed, setFailed] = useState(false)
+  if (!message.fileUrl && !message.filePath && message.type === 'text') return null
+  const src = mediaSrc(message)
   if (message.type === 'image' || message.type === 'sticker') {
-    return message.fileUrl
-      ? <img src={message.fileUrl} alt={message.fileName || 'תמונה'} className="max-w-full rounded-lg max-h-64 object-cover" />
-      : <p className="text-sm">תמונה</p>
+    if (failed) return <p className="text-sm">{message.type === 'sticker' ? 'סטיקר' : 'תמונה'}</p>
+    return (
+      <>
+        <button type="button" onClick={() => setZoom(true)} className="block">
+          <img src={src} alt={message.fileName || 'תמונה'} onError={() => setFailed(true)} className={`rounded-lg max-w-full ${message.type === 'sticker' ? 'max-h-40' : 'max-h-64 object-cover cursor-zoom-in'}`} />
+        </button>
+        {zoom && (
+          <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4" onClick={() => setZoom(false)}>
+            <img src={src} alt="" className="max-h-[90vh] max-w-[90vw] object-contain" />
+          </div>
+        )}
+      </>
+    )
   }
-  if (message.type === 'video') {
-    return message.fileUrl
-      ? <video src={message.fileUrl} controls className="max-w-full rounded-lg max-h-64" />
-      : <p className="text-sm">סרטון</p>
-  }
-  if (message.type === 'audio') {
-    return message.fileUrl
-      ? <audio src={message.fileUrl} controls className="max-w-full" />
-      : <p className="text-sm">הודעה קולית</p>
-  }
+  if (message.type === 'video') return failed
+    ? <p className="text-sm">סרטון</p>
+    : <video src={src} controls onError={() => setFailed(true)} className="max-w-full rounded-lg max-h-64" />
+  if (message.type === 'audio') return failed
+    ? <p className="text-sm">הודעה קולית</p>
+    : <audio src={src} controls onError={() => setFailed(true)} className="max-w-full" />
   if (message.type === 'document') {
-    return message.fileUrl
-      ? <a href={message.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-[#027eb5] underline"><FileText size={16} />{message.fileName || 'קובץ'}</a>
-      : <p className="text-sm flex items-center gap-2"><FileText size={16} />{message.fileName || 'קובץ'}</p>
+    return <a href={`${src}${src.includes('?') ? '&' : '?'}download=1`} className="flex items-center gap-2 text-sm text-[#027eb5] underline"><FileText size={16} />{message.fileName || 'קובץ'}</a>
   }
   if (message.type !== 'text' && !message.text) return <p className="text-sm text-slate-600">{message.type === 'location' ? 'מיקום' : message.type === 'contact' ? 'איש קשר' : 'הודעה'}</p>
   return null

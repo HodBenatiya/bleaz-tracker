@@ -32,6 +32,26 @@ if (waha.kind === 'message') {
   assert.equal(waha.message.fileName, 'cv.pdf')
 }
 
+const image = parseProviderWebhook({
+  event: 'message',
+  payload: {
+    id: 'false_972521111111@c.us_IMG',
+    timestamp: 1667561485,
+    from: '972521111111@c.us',
+    fromMe: false,
+    body: '',
+    hasMedia: true,
+    media: { mimetype: 'image/jpeg', caption: 'הנה תמונה', url: 'http://localhost:3000/api/files/a.jpg' },
+  },
+})
+assert.equal(image.kind, 'message')
+if (image.kind === 'message') {
+  assert.equal(image.message.type, 'image')
+  assert.equal(image.message.text, 'הנה תמונה')
+  assert.equal(image.message.hasMedia, true)
+  assert.equal(image.message.downloadUrl, 'http://localhost:3000/api/files/a.jpg')
+}
+
 const mine = parseProviderWebhook({
   event: 'message.any',
   payload: {

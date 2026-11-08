@@ -248,6 +248,7 @@ export function mergeWaMessages(a?: WaMessage[] | null, b?: WaMessage[] | null):
       text: next.text || prev.text,
       timestamp: next.timestamp || prev.timestamp,
       fileUrl: next.fileUrl || prev.fileUrl,
+      filePath: next.filePath || prev.filePath,
       fileName: next.fileName || prev.fileName,
       mimeType: next.mimeType || prev.mimeType,
       senderName: next.senderName || prev.senderName,
