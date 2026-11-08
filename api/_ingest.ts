@@ -1,7 +1,10 @@
 import type { Candidate, WaDeliveryStatus, WaInboxLead, WaMessage, WaSessionState } from '../src/types/index.js'
 import {
+  applyKnownLid,
   inboxRowId,
+  isOwnWaIdentity,
   looksLikeCv,
+  looksLikeWaLid,
   mergeWaMessages,
   phoneKey,
   preferDeliveryStatus,
@@ -11,7 +14,7 @@ import {
 } from '../src/utils/wa.js'
 import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse.js'
 import { db } from './_db.js'
-import { downloadIncomingMedia, providerName, redactError } from './_provider.js'
+import { downloadIncomingMedia, providerName, redactError, resolveWahaLid } from './_provider.js'
 import { captureTaskCommand } from './_tasks.js'
 
 interface CandidateRow { id: string; data: Candidate }
@@ -22,10 +25,10 @@ async function loadCandidateRows(): Promise<CandidateRow[]> {
   return (data ?? []) as CandidateRow[]
 }
 
-function sameThread(candidate: Candidate, chatId: string): boolean {
+function sameThread(candidate: Candidate, chatId: string, lid?: string): boolean {
   const key = threadKeyFromChat(chatId)
-  if (!key) return false
-  if (candidate.waChatId && threadKeyFromChat(candidate.waChatId) === key) return true
+  if (lid && candidate.waLid && threadKeyFromChat(candidate.waLid) === threadKeyFromChat(lid)) return true
+  if (key && candidate.waChatId && threadKeyFromChat(candidate.waChatId) === key) return true
   if (!chatId.endsWith('@lid') && phoneKey(candidate.phone) && phoneKey(candidate.phone) === phoneKey(chatId)) return true
   return false
 }
@@ -42,6 +45,7 @@ function toWaMessage(parsed: ParsedMessage, fileUrl?: string): WaMessage {
     fileUrl,
     senderName: parsed.senderName,
     status: parsed.direction === 'out' ? 'sent' : undefined,
+    source: parsed.source || (providerName() === 'waha' ? 'waha' : 'greenapi'),
   }
 }
 
@@ -54,7 +58,7 @@ async function writeCandidate(id: string, data: Candidate): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
-async function appendToCandidate(id: string, fallback: Candidate, message: WaMessage, chatId: string): Promise<void> {
+async function appendToCandidate(id: string, fallback: Candidate, message: WaMessage, chatId: string, lid?: string): Promise<void> {
   const { data: freshRow, error } = await db().from('candidates').select('data').eq('id', id).maybeSingle()
   if (error) throw new Error(error.message)
   const fresh = (freshRow?.data as Candidate) || fallback
@@ -62,13 +66,14 @@ async function appendToCandidate(id: string, fallback: Candidate, message: WaMes
   const messages = mergeWaMessages(fresh.waMessages, [message])
   const last = messages.length ? messages[messages.length - 1].timestamp : fresh.lastWaAt
   const attachCv = !fresh.cvUrl && !!message.fileUrl && looksLikeCv(message.fileName, message.mimeType)
-  const phone = toLocalPhone(fresh.phone) || toLocalPhone(chatId) || fresh.phone
+  const phone = looksLikeWaLid(chatId) ? fresh.phone : (toLocalPhone(fresh.phone) || toLocalPhone(chatId) || fresh.phone)
   const next: Candidate = {
     ...fresh,
     phone: phone || fresh.phone,
     waMessages: messages,
     waUnread: existed || message.direction !== 'in' ? (fresh.waUnread ?? 0) : (fresh.waUnread ?? 0) + 1,
-    waChatId: fresh.waChatId || chatId,
+    waChatId: looksLikeWaLid(chatId) ? fresh.waChatId : (fresh.waChatId || chatId),
+    waLid: fresh.waLid || lid || (chatId.endsWith('@lid') ? chatId : undefined),
     lastWaAt: last,
     cvUrl: attachCv ? message.fileUrl : fresh.cvUrl,
     cvFileName: attachCv ? (message.fileName || fresh.cvFileName) : fresh.cvFileName,
@@ -107,6 +112,14 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
   const { data: existing, error } = await db().from('wa_inbox').select('data').eq('id', id).maybeSingle()
   if (error) throw new Error(error.message)
   const prev = existing?.data as WaInboxLead | undefined
+  if (prev?.mergedInto) {
+    const { data: target, error: targetErr } = await db().from('wa_inbox').select('data').eq('id', prev.mergedInto).maybeSingle()
+    if (targetErr) throw new Error(targetErr.message)
+    if (target?.data) {
+      await appendToInbox({ ...parsed, chatId: (target.data as WaInboxLead).chatId || parsed.chatId }, message)
+      return
+    }
+  }
   if (prev?.candidateId) {
     const { data: cand, error: candErr } = await db().from('candidates').select('id, data').eq('id', prev.candidateId).maybeSingle()
     if (candErr) throw new Error(candErr.message)
@@ -116,12 +129,13 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
     }
   }
   const now = new Date().toISOString()
-  const phone = toLocalPhone(parsed.chatId) || parsed.chatId
+  const unresolved = !!parsed.unresolved || parsed.chatId.endsWith('@lid')
+  const phone = unresolved ? '' : (toLocalPhone(parsed.chatId) || '')
   const base: WaInboxLead = prev?.messages ? prev : {
     id,
     phone,
     chatId: parsed.chatId,
-    name: parsed.senderName || phone,
+    name: parsed.senderName || (unresolved ? '' : phone),
     messages: [],
     unread: 0,
     lastMessageAt: message.timestamp,
@@ -134,9 +148,12 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
   const next: WaInboxLead = {
     ...base,
     id,
-    phone,
-    chatId: parsed.chatId.endsWith('@lid') ? parsed.chatId : (toWhatsAppChatId(parsed.chatId) || parsed.chatId),
-    name: keepName ? base.name : (parsed.senderName || base.name || phone),
+    phone: unresolved ? '' : phone,
+    chatId: unresolved ? (parsed.lid || parsed.chatId) : (toWhatsAppChatId(parsed.chatId) || parsed.chatId),
+    lid: parsed.lid || prev?.lid,
+    provider: parsed.source || prev?.provider || 'waha',
+    phoneUnresolved: unresolved,
+    name: keepName ? base.name : (parsed.senderName || base.name || (unresolved ? '' : phone)),
     messages,
     unread: existed || message.direction !== 'in' ? (base.unread ?? 0) : (base.unread ?? 0) + 1,
     lastMessageAt: messages.length ? messages[messages.length - 1].timestamp : message.timestamp,
@@ -277,6 +294,87 @@ export async function storeOutgoingMessage(chatId: string, message: WaMessage): 
   await appendToInbox(parsed, message)
 }
 
+async function resolveIncoming(message: ParsedMessage, session?: string): Promise<ParsedMessage | 'self'> {
+  let phoneJid = message.phoneJid
+  const lid = message.lid || (message.chatId.endsWith('@lid') ? message.chatId : undefined)
+  if (!phoneJid && lid && message.source !== 'greenapi') {
+    const pn = await resolveWahaLid(lid, session)
+    if (pn) phoneJid = pn.includes('@') ? pn.replace('@s.whatsapp.net', '@c.us') : toWhatsAppChatId(pn)
+  }
+  const resolved = applyKnownLid({ chatId: message.chatId, lid, phoneJid })
+  if (resolved.self) return 'self'
+  return { ...message, chatId: resolved.chatId, lid: resolved.lid, phoneJid, unresolved: resolved.unresolved }
+}
+
+function tagWaha(messages: WaMessage[] | undefined): WaMessage[] {
+  return (messages ?? []).map(m => (m?.source ? m : { ...m, source: 'waha' as const }))
+}
+
+/** Move LID-keyed inbox rows onto the real 05X phone once WAHA can resolve them. The LID row is kept and marked mergedInto. */
+export async function repairLidInbox(session?: string): Promise<number> {
+  const { data, error } = await db().from('wa_inbox').select('id, data').limit(200)
+  if (error) throw new Error(error.message)
+  let fixed = 0
+  let looked = 0
+  for (const row of data ?? []) {
+    if (looked >= 25) break
+    if (row.id === 'wa_session') continue
+    const lead = row.data as WaInboxLead
+    if (!lead || lead.mergedInto || lead.provider === 'greenapi') continue
+    const lid = lead.lid
+      || (String(lead.chatId || '').endsWith('@lid') ? lead.chatId : '')
+      || (looksLikeWaLid(lead.phone) ? `${String(lead.phone).replace(/\D/g, '')}@lid` : '')
+    if (!lid || !looksLikeWaLid(lid) || isOwnWaIdentity(lid)) continue
+    looked++
+    let phoneJid = lead.phone && !looksLikeWaLid(lead.phone) ? toWhatsAppChatId(lead.phone) : ''
+    if (!phoneJid) {
+      const pn = await resolveWahaLid(lid, session)
+      if (pn) phoneJid = pn.includes('@') ? pn.replace('@s.whatsapp.net', '@c.us') : toWhatsAppChatId(pn)
+    }
+    const now = new Date().toISOString()
+    const tagged = tagWaha(lead.messages)
+    if (!phoneJid || isOwnWaIdentity(phoneJid)) {
+      await writeInbox(String(row.id), {
+        ...lead, phone: '', phoneUnresolved: true, lid, provider: 'waha', messages: tagged, updatedAt: now,
+      }, now)
+      fixed++
+      continue
+    }
+    const phone = toLocalPhone(phoneJid)
+    const targetId = inboxRowId(phoneJid)
+    if (targetId === row.id) {
+      await writeInbox(String(row.id), {
+        ...lead, phone, chatId: phoneJid, lid, phoneUnresolved: false, provider: 'waha', messages: tagged, updatedAt: now,
+      }, now)
+      fixed++
+      continue
+    }
+    const { data: existing, error: readErr } = await db().from('wa_inbox').select('data').eq('id', targetId).maybeSingle()
+    if (readErr) throw new Error(readErr.message)
+    const prev = existing?.data as WaInboxLead | undefined
+    const name = [prev?.name, lead.name].find(value => value && !looksLikeWaLid(value)) || phone
+    const merged: WaInboxLead = {
+      id: targetId,
+      phone,
+      chatId: phoneJid,
+      lid,
+      provider: 'waha',
+      phoneUnresolved: false,
+      name,
+      messages: mergeWaMessages(prev?.messages, tagged),
+      unread: Math.max(prev?.unread ?? 0, lead.unread ?? 0),
+      lastMessageAt: lead.lastMessageAt || prev?.lastMessageAt || now,
+      candidateId: prev?.candidateId || lead.candidateId,
+      createdAt: prev?.createdAt || lead.createdAt || now,
+      updatedAt: now,
+    }
+    await writeInbox(targetId, merged, now)
+    await writeInbox(String(row.id), { ...lead, mergedInto: targetId, provider: 'waha', lid, messages: tagged, updatedAt: now }, now)
+    fixed++
+  }
+  return fixed
+}
+
 export async function ingestWebhookBody(
   body: unknown,
   opts?: { downloadFiles?: boolean; captureTasks?: boolean },
@@ -292,8 +390,16 @@ export async function ingestWebhookBody(
     return { action: 'ack' }
   }
 
-  const incoming = parsed.message
-  if (await alreadyStored(incoming.id, incoming.chatId)) {
+  const session = body && typeof body === 'object' && typeof (body as { session?: unknown }).session === 'string'
+    ? (body as { session: string }).session
+    : undefined
+  const resolved = await resolveIncoming(parsed.message, session)
+  if (resolved === 'self') return { action: 'ignored-self' }
+  const incoming = resolved
+  if (
+    await alreadyStored(incoming.id, incoming.chatId) ||
+    (incoming.lid ? await alreadyStored(incoming.id, incoming.lid) : false)
+  ) {
     if (opts?.downloadFiles !== false && (incoming.downloadUrl || incoming.hasMedia)) {
       await attachMediaIfMissing(incoming)
     }
@@ -310,9 +416,9 @@ export async function ingestWebhookBody(
 
   const message = toWaMessage(incoming, fileUrl)
   const rows = await loadCandidateRows()
-  const found = rows.find(r => sameThread(r.data, incoming.chatId))
+  const found = rows.find(r => sameThread(r.data, incoming.chatId, incoming.lid))
   if (found) {
-    await appendToCandidate(found.id, found.data, message, incoming.chatId)
+    await appendToCandidate(found.id, found.data, message, incoming.chatId, incoming.lid)
     await linkInbox(incoming.chatId, found.id)
   } else {
     await appendToInbox(incoming, message)

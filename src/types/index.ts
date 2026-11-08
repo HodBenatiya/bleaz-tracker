@@ -226,7 +226,8 @@ export interface Candidate {
   // ── וואטסאפ ──
   waMessages?: WaMessage[]
   waUnread?: number
-  waChatId?: string          // 9725XXXXXXXX@c.us or ...@lid
+  waChatId?: string          // 9725XXXXXXXX@c.us
+  waLid?: string             // WhatsApp LID alias, …@lid
   lastWaAt?: string
   statusHistory?: StatusHistoryEntry[]
 }
@@ -247,6 +248,7 @@ export interface WaMessage {
   caption?: string
   senderName?: string
   status?: WaDeliveryStatus
+  source?: 'waha' | 'greenapi'
 }
 
 export interface StatusHistoryEntry {
@@ -267,6 +269,10 @@ export interface WaInboxLead {
   unread: number
   lastMessageAt: string
   candidateId?: string
+  lid?: string
+  provider?: 'waha' | 'greenapi'
+  phoneUnresolved?: boolean
+  mergedInto?: string
   createdAt: string
   updatedAt: string
 }

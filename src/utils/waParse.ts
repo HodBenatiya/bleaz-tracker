@@ -13,6 +13,10 @@ export interface ParsedMessage {
   downloadUrl?: string
   senderName?: string
   hasMedia?: boolean
+  lid?: string
+  phoneJid?: string
+  unresolved?: boolean
+  source?: 'waha' | 'greenapi'
 }
 
 export type WaInbound =
@@ -98,6 +102,48 @@ function contactJid(payload: Record<string, any>): string {
   return ''
 }
 
+function readPath(obj: Record<string, any>, path: string[]): unknown {
+  let cur: any = obj
+  for (const key of path) {
+    if (!cur || typeof cur !== 'object') return undefined
+    cur = cur[key]
+  }
+  return cur
+}
+
+const PHONE_JID_PATHS = [
+  ['_data', 'key', 'remoteJidAlt'],
+  ['_data', 'key', 'participantAlt'],
+  ['_data', 'key', 'senderPn'],
+  ['_data', 'key', 'participantPn'],
+  ['_data', 'senderPn'],
+  ['_data', 'participantPn'],
+  ['senderPn'],
+  ['participantPn'],
+]
+
+function phoneJidFromPayload(payload: Record<string, any>): string {
+  for (const path of PHONE_JID_PATHS) {
+    const id = jid(readPath(payload, path))
+    if (id.endsWith('@c.us')) return id
+  }
+  const info = payload?._data?.Info
+  for (const value of [info?.SenderAlt, info?.RecipientAlt, info?.Sender]) {
+    const id = jid(value)
+    if (id.endsWith('@c.us')) return id
+  }
+  return ''
+}
+
+function lidFromPayload(payload: Record<string, any>, chatId: string): string {
+  if (chatId.endsWith('@lid')) return chatId
+  for (const value of [payload.from, payload.chatId, payload._data?.key?.remoteJid, payload._data?.key?.participant]) {
+    const id = jid(value)
+    if (id.endsWith('@lid')) return id
+  }
+  return ''
+}
+
 function parseWahaMessage(payload: Record<string, any>, directionHint?: 'in' | 'out'): ParsedMessage | null {
   const chatId = contactJid(payload)
   if (!chatId) return null
@@ -130,6 +176,9 @@ function parseWahaMessage(payload: Record<string, any>, directionHint?: 'in' | '
     downloadUrl,
     senderName: senderName || undefined,
     hasMedia,
+    lid: lidFromPayload(payload, chatId) || undefined,
+    phoneJid: phoneJidFromPayload(payload) || undefined,
+    source: 'waha',
   }
 }
 
@@ -211,6 +260,7 @@ function parseGreenMessage(body: Record<string, any>): ParsedMessage | null {
     downloadUrl,
     senderName: senderName || undefined,
     hasMedia: !!file,
+    source: 'greenapi',
   }
 }
 

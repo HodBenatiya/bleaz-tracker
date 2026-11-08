@@ -43,6 +43,89 @@ export function isIsraeliMobile(raw: string | null | undefined): boolean {
   return /^05\d{8}$/.test(toLocalPhone(raw))
 }
 
+/** The business WhatsApp line connected to WAHA. Its LID is not a phone. */
+export const WAHA_BUSINESS_PHONE = '0559817733'
+export const WAHA_BUSINESS_LID = '82077663920366'
+
+function extraOwnValues(): string[] {
+  const env = typeof process !== 'undefined' ? process.env : undefined
+  if (!env) return []
+  return [env.WAHA_OWN_PHONE, env.WAHA_OWN_LID].filter((value): value is string => !!value)
+}
+
+export function lidDigits(value: string | null | undefined): string {
+  return String(value ?? '').replace(/@lid$/i, '').replace(/\D/g, '')
+}
+
+/** A WhatsApp LID (…@lid or a 13+ digit id), not an Israeli phone. */
+export function looksLikeWaLid(value: string | null | undefined): boolean {
+  const raw = String(value ?? '').trim()
+  if (!raw) return false
+  if (/@lid$/i.test(raw)) return true
+  if (/^lid\d{13,}$/i.test(raw)) return true
+  const digits = raw.replace(/\D/g, '')
+  return digits.length >= 13 && !isIsraeliNational(digits)
+}
+
+/** True for the business number and for its WhatsApp LID. */
+export function isOwnWaIdentity(value: string | null | undefined): boolean {
+  if (!value) return false
+  const digits = String(value).replace(/\D/g, '')
+  const ownLids = new Set<string>([WAHA_BUSINESS_LID])
+  const ownPhones = new Set<string>([phoneKey(WAHA_BUSINESS_PHONE)])
+  for (const extra of extraOwnValues()) {
+    const extraDigits = extra.replace(/\D/g, '')
+    if (extraDigits.length >= 13) ownLids.add(extraDigits)
+    const key = phoneKey(extra)
+    if (isIsraeliNational(key)) ownPhones.add(key)
+  }
+  if (digits && ownLids.has(digits)) return true
+  const key = phoneKey(value)
+  return !!key && ownPhones.has(key)
+}
+
+export interface ResolvedContact {
+  chatId: string
+  lid?: string
+  phone: string
+  unresolved: boolean
+  self: boolean
+}
+
+/** Apply a phone discovered in the payload or via the WAHA lid map. */
+export function applyKnownLid(input: { chatId: string; lid?: string; phoneJid?: string }): ResolvedContact {
+  const lid = input.lid || (input.chatId.endsWith('@lid') ? input.chatId : undefined)
+  const phoneJid = input.phoneJid && !input.phoneJid.endsWith('@lid') ? input.phoneJid : ''
+  const contactIsLid = input.chatId.endsWith('@lid')
+  if (contactIsLid && (isOwnWaIdentity(input.chatId) || isOwnWaIdentity(lid) || (phoneJid && isOwnWaIdentity(phoneJid)))) {
+    return { chatId: input.chatId, lid, phone: '', unresolved: true, self: true }
+  }
+  if (!contactIsLid && isOwnWaIdentity(input.chatId)) {
+    return { chatId: input.chatId, lid, phone: toLocalPhone(input.chatId), unresolved: false, self: true }
+  }
+  if (contactIsLid && phoneJid) {
+    return { chatId: phoneJid, lid, phone: toLocalPhone(phoneJid), unresolved: false, self: false }
+  }
+  if (contactIsLid) return { chatId: input.chatId, lid, phone: '', unresolved: true, self: false }
+  return {
+    chatId: input.chatId,
+    lid,
+    phone: toLocalPhone(input.chatId),
+    unresolved: false,
+    self: false,
+  }
+}
+
+/** Inbox shows WAHA only. Legacy Green API history stays on the candidate and is not deleted. */
+export function isWahaInboxMessage(message: WaMessage | null | undefined): boolean {
+  if (!message) return false
+  if (message.source === 'greenapi') return false
+  if (message.source === 'waha') return true
+  const legacy = message as WaMessage & { dir?: unknown }
+  if (legacy.dir && !message.direction && !message.source) return false
+  return false
+}
+
 /** Green API and WAHA both use 9725XXXXXXXX@c.us. @lid ids are kept as-is. */
 export function toWhatsAppChatId(raw: string | null | undefined): string {
   const trimmed = String(raw ?? '').trim()
@@ -264,6 +347,8 @@ export interface WaThread {
   candidate?: Candidate
   inbox?: WaInboxLead
   lid: boolean
+  unresolved: boolean
+  phoneLabel: string
 }
 
 export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox: WaInboxLead[] | null | undefined): WaThread[] {
@@ -290,13 +375,14 @@ export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox
   }
 
   for (const lead of safeInbox) {
-    if (!lead || lead.id === 'wa_session') continue
-    const key = threadKeyFromChat(lead.chatId || lead.phone)
+    if (!lead || lead.id === 'wa_session' || lead.mergedInto || lead.provider === 'greenapi') continue
+    const key = threadKeyFromChat(lead.chatId || lead.phone || lead.lid)
     if (!key) continue
     const slot = byKey.get(key) ?? {}
     if (!slot.candidate) {
       const match = safeCandidates.find(c =>
         (c.waChatId && threadKeyFromChat(c.waChatId) === key) ||
+        (c.waLid && lidDigits(c.waLid) && lidDigits(c.waLid) === lidDigits(lead.lid || lead.chatId)) ||
         (phoneKey(c.phone) !== '' && phoneKey(c.phone) === phoneKey(lead.phone))
       )
       if (match) slot.candidate = match
@@ -308,14 +394,28 @@ export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox
   const threads: WaThread[] = []
   byKey.forEach((slot, key) => {
     const { candidate, lead } = slot
-    const messages = mergeWaMessages(candidate?.waMessages, asList(lead?.messages))
+    const leadIsWaha = !!lead && (
+      lead.provider === 'waha' ||
+      looksLikeWaLid(lead.chatId) ||
+      looksLikeWaLid(lead.lid) ||
+      looksLikeWaLid(lead.phone) ||
+      String(lead.id).includes('lid')
+    )
+    const messages = mergeWaMessages(
+      asList<WaMessage>(candidate?.waMessages).filter(m => isWahaInboxMessage(m)),
+      asList<WaMessage>(lead?.messages).filter(m => m?.source === 'waha' || (leadIsWaha && m?.source !== 'greenapi')),
+    )
     if (!messages.length) return
-    const phone = toLocalPhone(candidate?.phone || lead?.phone || '') || (lead?.phone || candidate?.phone || '')
+    const phone = toLocalPhone(candidate?.phone || lead?.phone || '') || ''
     const chatId = candidate?.waChatId || lead?.chatId || toWhatsAppChatId(phone)
+    if (isOwnWaIdentity(phone) || isOwnWaIdentity(chatId) || isOwnWaIdentity(lead?.lid) || isOwnWaIdentity(candidate?.waLid)) return
+    const unresolved = !!(lead?.phoneUnresolved) || looksLikeWaLid(phone) || looksLikeWaLid(chatId) || looksLikeWaLid(key)
     const lastMsg = messages[messages.length - 1]
     const lastAt = laterIso(candidate?.lastWaAt, lead?.lastMessageAt, lastMsg?.timestamp) || ''
     const leadUnread = lead && lead.candidateId ? 0 : (lead?.unread ?? 0)
-    const title = personName(candidate?.name, phone) || personName(lead?.name, phone) || formatPhoneDisplay(phone) || 'ללא מספר'
+    const named = personName(candidate?.name, phone) || personName(lead?.name, phone)
+    const phoneLabel = unresolved ? 'מספר לא זמין' : (formatPhoneDisplay(phone) || 'מספר לא זמין')
+    const title = named || phoneLabel
     const outbound = lastMsg?.direction === 'out'
     const body = messagePreview(lastMsg)
     threads.push({
@@ -330,7 +430,9 @@ export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox
       messages,
       candidate,
       inbox: lead,
-      lid: key.indexOf('lid') === 0,
+      lid: key.indexOf('lid') === 0 || unresolved,
+      unresolved,
+      phoneLabel,
     })
   })
 

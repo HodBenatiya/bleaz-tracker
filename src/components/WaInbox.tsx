@@ -3,7 +3,7 @@ import { ArrowRight, CheckCheck, FileText, Loader2, MapPin, Search, Send } from 
 import type { Candidate, CandidateStatus, SavedPosition, WaInboxLead, WaMessage, WaSessionState } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
-import { buildWaThreads, formatPhoneDisplay, isIsraeliMobile, latestCv, mergeWaMessages, toLocalPhone, type WaThread } from '../utils/wa'
+import { buildWaThreads, isIsraeliMobile, latestCv, mergeWaMessages, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
   candidates: Candidate[]
@@ -352,7 +352,7 @@ function WaInboxScreen({
                   <span className="mr-auto text-[11px] text-slate-400 shrink-0">{formatListTime(t.lastAt)}</span>
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <p className={`truncate text-sm ${t.unread > 0 ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{t.preview || formatPhoneDisplay(t.phone)}</p>
+                  <p className={`truncate text-sm ${t.unread > 0 ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{t.preview || t.phoneLabel}</p>
                   {t.unread > 0 && (
                     <span className="mr-auto min-w-5 h-5 px-1 rounded-full bg-[#25d366] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
                       {t.unread}
@@ -363,6 +363,7 @@ function WaInboxScreen({
                   {t.kind === 'lead'
                     ? <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">ליד</span>
                     : <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${t.candidate ? CANDIDATE_STATUS_COLORS[t.candidate.status] : ''}`}>מועמד</span>}
+                  {t.unresolved && <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded mr-1">מספר לא זמין</span>}
                 </div>
               </div>
             </button>
@@ -382,7 +383,7 @@ function WaInboxScreen({
               </button>
               <div className="min-w-0 flex-1">
                 <p className="font-bold truncate">{selected.title}</p>
-                <p className="text-[11px] text-white/80 truncate">{formatPhoneDisplay(selected.phone)}{selected.candidate?.city ? ` · ${selected.candidate.city}` : ''}</p>
+                <p className="text-[11px] text-white/80 truncate">{selected.phoneLabel}{selected.candidate?.city ? ` · ${selected.candidate.city}` : ''}</p>
               </div>
               <button onClick={() => openAssign(selected)} className="bg-white text-[#075e54] text-sm font-bold px-3 py-1.5 rounded-lg">
                 שיוך
@@ -574,7 +575,7 @@ function previewCandidates(): Candidate[] {
     lastWaAt: now,
     savedPositionIds: [],
     waMessages: [{
-      id: 'm1', direction: 'in', text: 'שלום, ראיתי את המשרה בחיפה', timestamp: now, type: 'text',
+      id: 'm1', direction: 'in', text: 'שלום, ראיתי את המשרה בחיפה', timestamp: now, type: 'text', source: 'waha',
     }],
     createdAt: now,
     updatedAt: now,
@@ -588,13 +589,14 @@ function previewInbox(): WaInboxLead[] {
     phone: '0509998887',
     chatId: '972509998887@c.us',
     name: 'דני',
+    provider: 'waha',
     unread: 2,
     lastMessageAt: now,
     createdAt: now,
     updatedAt: now,
     messages: [
-      { id: 'm2', direction: 'in', text: 'אפשר לשלוח קורות חיים?', timestamp: now, type: 'text' },
-      { id: 'm3', direction: 'in', text: '', timestamp: now, type: 'document', fileName: 'cv.pdf' },
+      { id: 'm2', direction: 'in', text: 'אפשר לשלוח קורות חיים?', timestamp: now, type: 'text', source: 'waha' },
+      { id: 'm3', direction: 'in', text: '', timestamp: now, type: 'document', fileName: 'cv.pdf', source: 'waha' },
     ],
   }]
 }

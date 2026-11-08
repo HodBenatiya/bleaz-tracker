@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { buildWaThreads, mergeCandidateSave, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
+import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeCandidateSave, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
 import { parseProviderWebhook } from '../src/utils/waParse'
 import type { Candidate } from '../src/types'
 
@@ -72,7 +72,7 @@ if (green.kind === 'message') {
 const base: Candidate = {
   id: 'c1', name: 'דנה', phone: '0521234567', status: 'new', positionType: '', source: 'WhatsApp',
   nonaStatus: '', notes: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-  waMessages: [{ id: 'm1', direction: 'in', text: 'א', timestamp: '2026-01-01T00:00:00.000Z', type: 'text' }],
+  waMessages: [{ id: 'm1', direction: 'in', text: 'א', timestamp: '2026-01-01T00:00:00.000Z', type: 'text', source: 'waha' }],
   waUnread: 1,
 }
 const edited: Candidate = { ...base, city: 'חיפה', waMessages: [], waUnread: 0, updatedAt: '2026-01-02T00:00:00.000Z' }
@@ -94,7 +94,7 @@ const threads = buildWaThreads(
   [{ ...base, waUnread: 0 }],
   [{
     id: 'wa_509998887', phone: '0509998887', chatId: '972509998887@c.us', name: 'יוסי',
-    messages: [{ id: 'l1', direction: 'in', text: 'עבודה?', timestamp: '2026-02-01T00:00:00.000Z', type: 'text' }],
+    messages: [{ id: 'l1', direction: 'in', text: 'עבודה?', timestamp: '2026-02-01T00:00:00.000Z', type: 'text', source: 'waha' }],
     unread: 1, lastMessageAt: '2026-02-01T00:00:00.000Z', createdAt: '2026-02-01T00:00:00.000Z', updatedAt: '2026-02-01T00:00:00.000Z',
   }],
 )
@@ -110,7 +110,7 @@ const broken = buildWaThreads(
     ...base,
     id: 'broken',
     phone: '0533333333',
-    waMessages: [{ id: 'x' }, { id: 'y', text: 12, timestamp: undefined }],
+    waMessages: [{ id: 'x', source: 'waha' }, { id: 'y', text: 12, timestamp: undefined, source: 'waha' }],
   }] as Candidate[],
   null as unknown as [],
 )
@@ -120,12 +120,83 @@ assert.equal(broken[0].messages.length, 2)
 const legacy = buildWaThreads([{
   ...base,
   id: 'legacy',
+  name: 'דניאלה',
   phone: '0544444444',
   waMessages: [{ id: 'old1', text: 'היי', dir: 'out', at: '2026-03-01T00:00:00.000Z' }],
 }] as Candidate[], [])
-assert.equal(legacy.length, 1)
-assert.equal(legacy[0].messages[0].direction, 'out')
-assert.equal(legacy[0].messages[0].timestamp, '2026-03-01T00:00:00.000Z')
+assert.equal(legacy.length, 0)
 assert.equal(mergeCandidateSave(oldCandidate, { ...oldCandidate, city: 'עכו' }).city, 'עכו')
+
+assert.equal(isOwnWaIdentity('82077663920366@lid'), true)
+assert.equal(isOwnWaIdentity('0559817733'), true)
+assert.equal(isOwnWaIdentity('972559817733'), true)
+assert.equal(isOwnWaIdentity('268371165761674@lid'), false)
+
+const resolved = applyKnownLid({
+  chatId: '268371165761674@lid',
+  phoneJid: '972521112233@c.us',
+})
+assert.equal(resolved.self, false)
+assert.equal(resolved.phone, '0521112233')
+assert.equal(resolved.chatId, '972521112233@c.us')
+assert.equal(applyKnownLid({ chatId: '82077663920366@lid' }).self, true)
+
+const lidThreads = buildWaThreads([], [{
+  id: 'wa_lid268371165761674',
+  phone: '268371165761674',
+  chatId: '268371165761674@lid',
+  name: 'יוסי',
+  messages: [{ id: 'm', direction: 'in', text: 'שלום', timestamp: '2026-04-01T00:00:00.000Z', type: 'text', source: 'waha' }],
+  unread: 1,
+  lastMessageAt: '2026-04-01T00:00:00.000Z',
+  createdAt: '2026-04-01T00:00:00.000Z',
+  updatedAt: '2026-04-01T00:00:00.000Z',
+  phoneUnresolved: true,
+}])
+assert.equal(lidThreads.length, 1)
+assert.equal(lidThreads[0].title, 'יוסי')
+assert.equal(lidThreads[0].phoneLabel, 'מספר לא זמין')
+
+const own = buildWaThreads([], [{
+  id: 'wa_lid82077663920366',
+  phone: '82077663920366',
+  chatId: '82077663920366@lid',
+  name: 'BLEAZ',
+  messages: [{ id: 'self', direction: 'in', text: 'בדיקה', timestamp: '2026-04-01T00:00:00.000Z', type: 'text', source: 'waha' }],
+  unread: 0,
+  lastMessageAt: '2026-04-01T00:00:00.000Z',
+  createdAt: '2026-04-01T00:00:00.000Z',
+  updatedAt: '2026-04-01T00:00:00.000Z',
+}])
+assert.equal(own.length, 0)
+
+const greenPayload = parseProviderWebhook({
+  typeWebhook: 'incomingMessageReceived',
+  timestamp: 1667561485,
+  idMessage: 'G1',
+  senderData: { chatId: '972521111111@c.us', senderName: 'HOSHEN' },
+  messageData: { typeMessage: 'textMessage', textMessageData: { textMessage: 'היי' } },
+})
+assert.equal(greenPayload.kind, 'message')
+if (greenPayload.kind === 'message') assert.equal(greenPayload.message.source, 'greenapi')
+
+const lidPayload = parseProviderWebhook({
+  event: 'message',
+  session: 'default',
+  payload: {
+    id: 'false_268371165761674@lid_AAA',
+    timestamp: 1667561485,
+    from: '268371165761674@lid',
+    fromMe: false,
+    body: 'אפשר פרטים?',
+    _data: { key: { remoteJid: '268371165761674@lid', remoteJidAlt: '972521112233@s.whatsapp.net' } },
+  },
+})
+assert.equal(lidPayload.kind, 'message')
+if (lidPayload.kind === 'message') {
+  assert.equal(lidPayload.message.source, 'waha')
+  assert.equal(lidPayload.message.phoneJid, '972521112233@c.us')
+  assert.equal(lidPayload.message.lid, '268371165761674@lid')
+}
 
 console.log('wa selfcheck ok')
