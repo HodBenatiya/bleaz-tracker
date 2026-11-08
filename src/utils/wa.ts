@@ -414,7 +414,7 @@ export function buildWaThreads(candidates: Candidate[] | null | undefined, inbox
     const lastAt = laterIso(candidate?.lastWaAt, lead?.lastMessageAt, lastMsg?.timestamp) || ''
     const leadUnread = lead && lead.candidateId ? 0 : (lead?.unread ?? 0)
     const named = personName(candidate?.name, phone) || personName(lead?.name, phone)
-    const phoneLabel = unresolved ? 'מספר לא זמין' : (formatPhoneDisplay(phone) || 'מספר לא זמין')
+    const phoneLabel = unresolved ? 'מאתר מספר…' : (formatPhoneDisplay(phone) || 'מאתר מספר…')
     const title = named || phoneLabel
     const outbound = lastMsg?.direction === 'out'
     const body = messagePreview(lastMsg)
