@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { DailyReport, Candidate, SavedPosition } from '../types'
 import { todayISO, toISODate } from '../utils/helpers'
-import { candidateAnchor, isPlacement } from '../utils/candidateAnchor'
+import { candidateAnchor, placementOverlapsRange } from '../utils/candidateAnchor'
 
 interface Props {
   reports:    DailyReport[]
@@ -149,7 +149,7 @@ export default function MarketingROI({ reports, candidates }: Props) {
 
   const totalSpend   = campaignRows.reduce((s, r) => s + r.spend, 0)
   const totalLeads   = campaignRows.reduce((s, r) => s + r.leads, 0)
-  const totalPlaced  = rangedCandidates.filter(isPlacement).length
+  const totalPlaced  = candidates.filter(candidate => placementOverlapsRange(candidate, range.start, range.end)).length
   const totalRevenue = totalPlaced * PLACEMENT_VALUE
   const totalROI     = totalSpend > 0 ? ((totalRevenue - totalSpend) / totalSpend) * 100 : 0
   const cpl          = totalLeads  > 0 ? totalSpend / totalLeads  : 0
@@ -218,7 +218,7 @@ export default function MarketingROI({ reports, candidates }: Props) {
         <KPI label="הוצאה"  value={`₪${totalSpend.toLocaleString('he-IL')}`}                          sub={range.label}        color="text-slate-700" />
         <KPI label="סה״כ לידים"  value={totalLeads.toLocaleString()}                                  sub="נכנסו מהמודעות"      color="text-blue-600" />
         <KPI label="עלות לליד"   value={cpl > 0 ? `₪${cpl.toFixed(0)}` : '—'}                       sub="CPL"                 color="text-slate-700" />
-        <KPI label="הוצבו"        value={totalPlaced.toString()}                                      sub="הצבות מאושרות"       color="text-emerald-600" />
+        <KPI label="הוצבו"        value={totalPlaced.toString()}                                      sub="לפי חודש שיוך"       color="text-emerald-600" />
         <KPI label="הכנסה"        value={`₪${totalRevenue.toLocaleString()}`}                         sub={`${totalPlaced} × ₪5,000`} color="text-green-600" />
         <KPI
           label="ROI"

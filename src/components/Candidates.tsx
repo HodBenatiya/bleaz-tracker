@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../utils/supabase'
 import type { Candidate, CandidateStatus, CandidateNote, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
+import AttributionMonthField from './AttributionMonthField'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
   { value: '',                label: 'לא הוגדר',        color: 'bg-slate-100 text-slate-500' },
@@ -572,6 +573,11 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                           {c.status === 'started_working' && c.startDate && (
                             <div className="text-xs text-emerald-500 mt-0.5">✅ {formatDateHe(c.startDate)}</div>
                           )}
+                          {(c.status === 'started_working' || c.status === 'placement_complete') && (
+                            <div className="mt-1">
+                              <AttributionMonthField candidate={c} onPick={save} />
+                            </div>
+                          )}
                         </div>
                         <div className="relative">
                           <button
@@ -1009,6 +1015,12 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   </div>
                 )}
 
+                {(form.status === 'started_working' || form.status === 'placement_complete') && (
+                  <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl px-3 py-2">
+                    <AttributionMonthField candidate={form} onPick={setForm} />
+                  </div>
+                )}
+
                 {/* Invoice status — only for placed candidates */}
                 {(form.status === 'started_working' || form.status === 'placement_complete') && (
                   <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
@@ -1217,6 +1229,16 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                       </span>
                     ))}
                   </div>
+                )}
+                {(viewing.status === 'started_working' || viewing.status === 'placement_complete') && (
+                  <AttributionMonthField
+                    candidate={viewing}
+                    onPick={next => {
+                      const updated = { ...next, updatedAt: new Date().toISOString() }
+                      setViewing(updated)
+                      save(updated)
+                    }}
+                  />
                 )}
                 {(viewing.interviewDate || viewing.startDate || viewing.nonaStatus) && (
                   <div className="flex flex-wrap gap-2">
