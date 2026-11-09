@@ -117,6 +117,9 @@ function WaInboxScreen({
   const [sendError, setSendError] = useState('')
   const [assignDraft, setAssignDraft] = useState<Candidate | null>(null)
   const [assignEditing, setAssignEditing] = useState(false)
+  const [noteSeed, setNoteSeed] = useState<{ text: string; token: number; force?: boolean } | null>(null)
+  const [noteDrafting, setNoteDrafting] = useState(false)
+  const noteToken = useRef(0)
   const [attachment, setAttachment] = useState<{ file: File; url: string; kind: 'image' | 'video' | 'file' } | null>(null)
   const [recording, setRecording] = useState(false)
   const [recordMs, setRecordMs] = useState(0)
@@ -346,6 +349,35 @@ function WaInboxScreen({
     pickFile(new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' }), 'image')
   }
 
+  const requestNoteDraft = async (thread: WaThread, force: boolean) => {
+    const token = ++noteToken.current
+    setNoteDrafting(true)
+    try {
+      const res = await fetch('/api/wa-note-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId: thread.chatId,
+          messages: thread.messages.slice(-40).map(message => ({
+            id: message.id,
+            direction: message.direction,
+            text: message.text,
+            type: message.type,
+            fileName: message.fileName,
+            mimeType: message.mimeType,
+          })),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (token !== noteToken.current || typeof data.draft !== 'string' || !data.draft.trim()) return
+      setNoteSeed({ text: data.draft, token, force })
+    } catch {
+      /* leave the note empty; the form still opens */
+    } finally {
+      if (token === noteToken.current) setNoteDrafting(false)
+    }
+  }
+
   const openAssign = (thread: WaThread) => {
     const phone = toLocalPhone(thread.phone) || toLocalPhone(thread.candidate?.phone) || ''
     const key = phoneKey(phone)
@@ -357,6 +389,7 @@ function WaInboxScreen({
       const noteText = history.length ? history[history.length - 1].text : (existing.notes ?? '')
       setAssignDraft({ ...existing, phone: toLocalPhone(existing.phone) || existing.phone, notes: noteText })
       setAssignEditing(true)
+      if (!noteText.trim()) void requestNoteDraft(thread, false)
     } else {
       setAssignDraft({
         ...emptyCandidate(),
@@ -365,6 +398,7 @@ function WaInboxScreen({
         source: 'WhatsApp',
       })
       setAssignEditing(false)
+      void requestNoteDraft(thread, false)
     }
   }
 
@@ -614,6 +648,9 @@ function WaInboxScreen({
           positions={shownPositions}
           onClose={() => setAssignDraft(null)}
           onSubmit={saveAssign}
+          noteSeed={noteSeed}
+          noteDrafting={noteDrafting}
+          onRegenerateNote={() => { if (selected) void requestNoteDraft(selected, true) }}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FileText, Loader2, Search, Upload, X } from 'lucide-react'
 import { supabase } from '../utils/supabase'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
@@ -19,19 +19,36 @@ const STATUS_ORDER: CandidateStatus[] = [
 
 const SOURCES = ['WhatsApp', 'Meta', 'אורגני', 'שיתוף / המלצה']
 
+interface NoteSeed {
+  text: string
+  token: number
+  force?: boolean
+}
+
 interface Props {
   initial: Candidate
   editing: boolean
   positions: SavedPosition[]
   onClose: () => void
   onSubmit: (candidate: Candidate) => void
+  noteSeed?: NoteSeed | null
+  noteDrafting?: boolean
+  onRegenerateNote?: () => void
 }
 
-export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit }: Props) {
+export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit, noteSeed, noteDrafting, onRegenerateNote }: Props) {
   const [form, setForm] = useState<Candidate>(initial)
   const [positionSearch, setPositionSearch] = useState('')
   const [cvUploading, setCvUploading] = useState(false)
+  const [noteDirty, setNoteDirty] = useState(false)
   const cvFileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!noteSeed?.text) return
+    if (!noteSeed.force && noteDirty) return
+    setForm(current => ({ ...current, notes: noteSeed.text }))
+    if (noteSeed.force) setNoteDirty(false)
+  }, [noteSeed?.token])
 
   const handleCvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -158,11 +175,18 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
 
           {/* הערות — full width, same screening note as the candidate card */}
           <div>
-            <label className="block text-sm font-bold text-slate-800 mb-1">הערה</label>
-            <p className="text-[11px] text-slate-500 mb-1">פרטי שיחת הסינון. נשמר כמו הערות בכרטיס המועמד.</p>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label className="block text-sm font-bold text-slate-800">הערה</label>
+              {onRegenerateNote && (
+                <button type="button" onClick={onRegenerateNote} disabled={noteDrafting} className="text-[11px] font-semibold text-indigo-700 disabled:opacity-50">
+                  {noteDrafting ? 'מכין טיוטה…' : 'נתח שוב'}
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 mb-1">פרטי שיחת הסינון. טיוטה אוטומטית לא נשמרת עד שלוחצים שמור.</p>
             <textarea
               value={form.notes}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              onChange={e => { setNoteDirty(true); setForm(f => ({ ...f, notes: e.target.value })) }}
               className="input w-full text-sm leading-relaxed min-h-[9.5rem] resize-y"
               rows={8}
               placeholder="ניסיון, זמינות, מה עלה בשיחה..."

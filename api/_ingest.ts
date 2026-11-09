@@ -223,6 +223,19 @@ export async function uploadWaFile(chatId: string, fileName: string, bytes: Uint
   return `cvs:${path}`
 }
 
+export async function readStoredFile(filePath: string): Promise<Uint8Array | null> {
+  const splitAt = filePath.indexOf(':')
+  if (splitAt <= 0) return null
+  try {
+    const client = storageClient()
+    const { data, error } = await client.storage.from(filePath.slice(0, splitAt)).download(filePath.slice(splitAt + 1))
+    if (error || !data) return null
+    return new Uint8Array(await data.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
 export async function openStoredMedia(filePath: string): Promise<string | null> {
   const splitAt = filePath.indexOf(':')
   if (splitAt <= 0) return null
