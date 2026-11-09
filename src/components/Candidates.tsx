@@ -6,6 +6,7 @@ import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
 import type { Candidate, CandidateStatus, CandidateNote, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import AttributionMonthField from './AttributionMonthField'
+import { signedStorageUrl } from '../utils/storageUrl'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
   { value: '',                label: 'לא הוגדר',        color: 'bg-slate-100 text-slate-500' },
@@ -840,10 +841,10 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   {viewing.source && <span className="flex items-center gap-1"><User size={11} className="text-slate-400" />{viewing.source}</span>}
                   {viewing.positionType && <span className="flex items-center gap-1"><Briefcase size={11} className="text-slate-400" />{viewing.positionType}</span>}
                   {viewing.cvUrl && (
-                    <a href={viewing.cvUrl} target="_blank" rel="noopener noreferrer"
+                    <button type="button" onClick={() => { signedStorageUrl(viewing.cvUrl || '').then(url => window.open(url, '_blank', 'noopener')).catch(() => alert('לא הצלחנו לפתוח את הקובץ')) }}
                       className="flex items-center gap-1 text-brand-600 hover:text-brand-800 hover:underline font-medium">
                       <FileText size={11} /> {viewing.cvFileName || 'קורות חיים'} <ExternalLink size={10} />
-                    </a>
+                    </button>
                   )}
                 </div>
                 {linkedPositions.length > 0 && (

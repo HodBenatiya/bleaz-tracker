@@ -2,9 +2,11 @@ import type { WaMessage, WaMessageType } from '../src/types/index.js'
 import { toWhatsAppChatId } from '../src/utils/wa.js'
 import { storeOutgoingMessage, uploadWaFile } from './_ingest.js'
 import { providerName, redactError, sendInboxText, sendWahaMedia, type WahaMediaKind } from './_provider.js'
+import { requireUser } from './_auth.js'
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })
+  if (!(await requireUser(req, res))) return
 
   const text = String(req.body?.text ?? '').trim()
   const phone = String(req.body?.phone ?? '')

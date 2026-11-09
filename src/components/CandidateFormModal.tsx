@@ -58,8 +58,7 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
       const path = `${form.id}-${Date.now()}-${file.name}`
       const { error } = await supabase.storage.from('cvs').upload(path, file, { upsert: true })
       if (error) throw error
-      const { data } = supabase.storage.from('cvs').getPublicUrl(path)
-      setForm(current => ({ ...current, cvUrl: data.publicUrl, cvFileName: file.name }))
+      setForm(current => ({ ...current, cvUrl: `cvs:${path}`, cvFileName: file.name }))
     } catch {
       alert('שגיאה בהעלאת הקובץ. ודא שיש bucket בשם "cvs" ב-Supabase Storage.')
     } finally {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Loader2, Search, X } from 'lucide-react'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS, type CandidateStatus } from '../types'
+import { authFetch } from '../utils/authFetch'
 
 interface MatchRow {
   id: string
@@ -58,7 +59,7 @@ export default function MatchCandidatesButton({ jobId }: { jobId: string }) {
     setError('')
     setMatches([])
     try {
-      const res = await fetch('/api/match-candidates', {
+      const res = await authFetch('/api/match-candidates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId }),

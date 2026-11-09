@@ -1,9 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
+import { db } from '../_db.js'
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.VITE_SUPABASE_ANON_KEY!
-)
+const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
 const CLIENT_STATUSES = ['sent_to_client', 'interview_scheduled', 'started_working', 'placement_complete']
 

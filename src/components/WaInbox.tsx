@@ -5,6 +5,7 @@ import { CANDIDATE_STATUS_COLORS } from '../types'
 import CandidateFormModal from './CandidateFormModal'
 import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
+import { authFetch } from '../utils/authFetch'
 import { buildWaThreads, mergeWaMessages, personName, phoneKey, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
@@ -153,7 +154,7 @@ function WaInboxScreen({
     let cancelled = false
     ;(async () => {
       try {
-        await fetch('/api/wa-resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        await authFetch('/api/wa-resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       } catch { /* the next webhook retries any row that is still missing a phone */ }
       if (!cancelled) onRefreshInbox()
     })()
@@ -281,7 +282,7 @@ function WaInboxScreen({
           data: await fileToBase64(attachment.file),
         }
       }
-      const res = await fetch('/api/wa-send', {
+      const res = await authFetch('/api/wa-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -353,7 +354,7 @@ function WaInboxScreen({
     const token = ++noteToken.current
     setNoteDrafting(true)
     try {
-      const res = await fetch('/api/wa-note-draft', {
+      const res = await authFetch('/api/wa-note-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -698,17 +699,51 @@ function Bubble({ message }: { message: WaMessage }) {
   )
 }
 
-function mediaSrc(message: WaMessage): string {
+function mediaApi(message: WaMessage): string {
   if (message.fileUrl?.startsWith('/api/wa-media')) return message.fileUrl
   if (message.fileUrl && /^https?:\/\//.test(message.fileUrl) && !message.fileUrl.includes('/api/files/')) return message.fileUrl
   return `/api/wa-media?id=${encodeURIComponent(message.id)}`
 }
 
+function useMediaSrc(message: WaMessage): string {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    let cancelled = false
+    let blobUrl = ''
+    const raw = mediaApi(message)
+    if (!raw.startsWith('/api/wa-media')) {
+      setSrc(raw)
+      return
+    }
+    const jsonUrl = `${raw}${raw.includes('?') ? '&' : '?'}json=1`
+    authFetch(jsonUrl)
+      .then(async response => {
+        const type = response.headers.get('content-type') || ''
+        if (type.includes('application/json')) {
+          const data = await response.json().catch(() => ({}))
+          if (!cancelled && data.url) setSrc(data.url)
+          return
+        }
+        if (!response.ok) return
+        const blob = await response.blob()
+        blobUrl = URL.createObjectURL(blob)
+        if (!cancelled) setSrc(blobUrl)
+      })
+      .catch(() => { if (!cancelled) setSrc('') })
+    return () => {
+      cancelled = true
+      if (blobUrl) URL.revokeObjectURL(blobUrl)
+    }
+  }, [message.id, message.fileUrl])
+  return src
+}
+
 function Media({ message }: { message: WaMessage }) {
   const [zoom, setZoom] = useState(false)
   const [failed, setFailed] = useState(false)
+  const src = useMediaSrc(message)
   if (!message.fileUrl && !message.filePath && message.type === 'text') return null
-  const src = mediaSrc(message)
+  if (!src) return <p className="text-sm text-slate-500">טוען קובץ…</p>
   if (message.type === 'image' || message.type === 'sticker') {
     if (failed) return <p className="text-sm">{message.type === 'sticker' ? 'סטיקר' : 'תמונה'}</p>
     return (
@@ -731,7 +766,7 @@ function Media({ message }: { message: WaMessage }) {
     ? <p className="text-sm">הודעה קולית</p>
     : <audio src={src} controls onError={() => setFailed(true)} className="max-w-full" />
   if (message.type === 'document') {
-    return <a href={`${src}${src.includes('?') ? '&' : '?'}download=1`} className="flex items-center gap-2 text-sm text-[#027eb5] underline"><FileText size={16} />{message.fileName || 'קובץ'}</a>
+    return <a href={src} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-[#027eb5] underline"><FileText size={16} />{message.fileName || 'קובץ'}</a>
   }
   if (message.type !== 'text' && !message.text) return <p className="text-sm text-slate-600">{message.type === 'location' ? 'מיקום' : message.type === 'contact' ? 'איש קשר' : 'הודעה'}</p>
   return null

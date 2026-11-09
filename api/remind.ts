@@ -1,12 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
+import { db } from './_db.js'
 import { ingestWebhookBody } from './_ingest.js'
 import { drainGreenInbox, sendNotify } from './_provider.js'
 import { captureTaskCommand } from './_tasks.js'
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.VITE_SUPABASE_ANON_KEY!
-)
+const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
 // ── Green API base ───────────────────────────────────────────────────────────
 function greenBase() {

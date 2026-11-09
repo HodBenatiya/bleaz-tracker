@@ -1,10 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
 import { sendNotify } from './_provider.js'
+import { db } from './_db.js'
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.VITE_SUPABASE_ANON_KEY!
-)
+const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
 function israelNow() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }))

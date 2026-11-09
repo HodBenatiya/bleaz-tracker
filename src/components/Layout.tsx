@@ -10,6 +10,8 @@ interface Props {
   onNewDay: () => void
   tasks:    Task[]
   waUnread?: number
+  accountEmail?: string
+  onLogout?: () => void
 }
 
 const PAGE_SUB: Record<View, string> = {
@@ -30,7 +32,7 @@ const PAGE_SUB: Record<View, string> = {
 
 const SIDEBAR_W = 'w-52' // 208px
 
-export default function Layout({ view, onNav, children, onNewDay, tasks, waUnread = 0 }: Props) {
+export default function Layout({ view, onNav, children, onNewDay, tasks, waUnread = 0, accountEmail, onLogout }: Props) {
   const today       = new Date().toISOString().split('T')[0]
   const openTasks   = tasks.filter(t => !t.done)
   const urgentCount = openTasks.filter(t => t.dueDate <= today).length
@@ -93,7 +95,13 @@ export default function Layout({ view, onNav, children, onNewDay, tasks, waUnrea
         </nav>
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-white/10">
+        <div className="px-4 py-3 border-t border-white/10 space-y-2">
+          {accountEmail && <p className="text-[11px] text-slate-300 truncate text-center" title={accountEmail}>{accountEmail}</p>}
+          {onLogout && (
+            <button type="button" onClick={onLogout} className="w-full text-xs text-slate-400 hover:text-white py-1">
+              יציאה
+            </button>
+          )}
           <p className="text-[10px] text-slate-600 text-center">BLEAZ © 2025</p>
         </div>
       </aside>
