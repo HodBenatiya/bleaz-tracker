@@ -10,6 +10,7 @@
     "api/wa-send.ts":         { "maxDuration": 15 },
     "api/wa-resolve.ts":      { "maxDuration": 15 },
     "api/wa-media.ts":        { "maxDuration": 15 },
-    "api/match-candidates.ts": { "maxDuration": 30 }
+    "api/match-candidates.ts": { "maxDuration": 30 },
+    "api/wa-note-draft.ts":   { "maxDuration": 20 }
   }
 }
