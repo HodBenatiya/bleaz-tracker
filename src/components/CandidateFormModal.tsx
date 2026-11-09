@@ -3,6 +3,7 @@ import { FileText, Loader2, Search, Upload, X } from 'lucide-react'
 import { supabase } from '../utils/supabase'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
+import AttributionMonthField from './AttributionMonthField'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
   { value: '', label: 'לא הוגדר', color: 'bg-slate-100 text-slate-500' },
@@ -155,15 +156,16 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
             </div>
           </div>
 
-          {/* הערות — full width */}
+          {/* הערות — full width, same screening note as the candidate card */}
           <div>
-            {lbl('הערות')}
+            <label className="block text-sm font-bold text-slate-800 mb-1">הערה</label>
+            <p className="text-[11px] text-slate-500 mb-1">פרטי שיחת הסינון. נשמר כמו הערות בכרטיס המועמד.</p>
             <textarea
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              className="input w-full resize-none text-sm"
-              rows={3}
-              placeholder="ניסיון, זמינות, הערות כלליות..."
+              className="input w-full text-sm leading-relaxed min-h-[9.5rem] resize-y"
+              rows={8}
+              placeholder="ניסיון, זמינות, מה עלה בשיחה..."
             />
           </div>
 
@@ -297,6 +299,12 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {(form.status === 'started_working' || form.status === 'placement_complete') && (
+            <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl px-3 py-2">
+              <AttributionMonthField candidate={form} onPick={setForm} />
             </div>
           )}
 

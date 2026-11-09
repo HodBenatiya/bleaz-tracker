@@ -5,7 +5,7 @@ import { CANDIDATE_STATUS_COLORS } from '../types'
 import CandidateFormModal from './CandidateFormModal'
 import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
-import { buildWaThreads, mergeWaMessages, personName, phoneKey, toLocalPhone, type WaThread } from '../utils/wa'
+import { buildWaThreads, mergeWaMessages, personName, phoneKey, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
   candidates: Candidate[]
@@ -353,7 +353,9 @@ function WaInboxScreen({
     const existing = thread.candidate
       || (key ? pool.find(item => phoneKey(item.phone) === key) : undefined)
     if (existing) {
-      setAssignDraft({ ...existing, phone: toLocalPhone(existing.phone) || existing.phone })
+      const history = existing.noteHistory ?? []
+      const noteText = history.length ? history[history.length - 1].text : (existing.notes ?? '')
+      setAssignDraft({ ...existing, phone: toLocalPhone(existing.phone) || existing.phone, notes: noteText })
       setAssignEditing(true)
     } else {
       setAssignDraft({
@@ -369,9 +371,13 @@ function WaInboxScreen({
   const saveAssign = async (draft: Candidate) => {
     if (!selected) return
     const phone = toLocalPhone(draft.phone) || draft.phone.trim()
+    const prior = candidates.find(item => item.id === draft.id) || selected.candidate
+    const noted = screeningNoteFields(prior, draft.notes, new Date().toISOString(), crypto.randomUUID())
     const linkedDraft: Candidate = {
       ...draft,
       phone,
+      notes: noted.notes,
+      noteHistory: noted.noteHistory,
       source: draft.source || 'WhatsApp',
       waMessages: mergeWaMessages(draft.waMessages, selected.messages),
       waUnread: 0,

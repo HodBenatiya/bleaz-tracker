@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { ChevronRight, ChevronLeft, ChevronDown, Edit2, Check, X, TrendingUp, DollarSign, Users, Clock, AlertCircle, CalendarCheck } from 'lucide-react'
 import type { Candidate, SavedPosition, DailyReport } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
+import { candidateAnchor, placementAttribution, placementInMonth } from '../utils/candidateAnchor'
+import AttributionMonthField from './AttributionMonthField'
 
 const PLACEMENT_FEE = 5000
 
@@ -52,8 +54,12 @@ function monthLabel(f: MonthFilter): string {
 }
 function inMonth(dateStr: string | undefined, f: MonthFilter): boolean {
   if (!dateStr) return false
-  const d = new Date(dateStr)
+  const d = dateStr.length <= 10 ? new Date(dateStr + 'T12:00:00') : new Date(dateStr)
   return d.getFullYear() === f.year && d.getMonth() + 1 === f.month
+}
+
+function placedInMonth(c: Candidate, f: MonthFilter): boolean {
+  return placementInMonth(c, f.year, f.month)
 }
 function daysInMonth(f: MonthFilter): number {
   return new Date(f.year, f.month, 0).getDate()
@@ -141,11 +147,12 @@ export default function Management({ candidates, positions, reports, onCandidate
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
-  // Placements = started or fully completed, with startDate in the selected month
-  const placements = candidates.filter(c =>
-    (c.status === 'started_working' || c.status === 'placement_complete') &&
-    inMonth(c.startDate, filter)
-  )
+  // A placement belongs to the month the candidate was created, not the start or interview date.
+  const placements = candidates.filter(c => placedInMonth(c, filter))
+  const fallbackPlacements = placements.filter(c => {
+    const attribution = placementAttribution(c)
+    return attribution.fallback && !attribution.manual
+  })
 
   // All active in pipeline (not new, not irrelevant)
   const inPipeline = candidates.filter(c =>
@@ -183,11 +190,7 @@ export default function Management({ candidates, positions, reports, onCandidate
     return f
   })
 
-  const month4Counts = last4.map(f =>
-    candidates.filter(c =>
-      (c.status === 'started_working' || c.status === 'placement_complete') && inMonth(c.startDate, f)
-    ).length
-  )
+  const month4Counts = last4.map(f => candidates.filter(c => placedInMonth(c, f)).length)
   const max4 = Math.max(...month4Counts, 1)
 
   // ── Invoice update ────────────────────────────────────────────────────────
@@ -280,9 +283,15 @@ export default function Management({ candidates, positions, reports, onCandidate
       {showPlacements && (
         <div className="bg-white rounded-2xl border border-emerald-200 overflow-hidden">
           <div className="px-5 py-3 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between">
-            <h3 className="font-bold text-emerald-800 text-sm">
-              השמות {monthLabel(filter)} — {placements.length} מועמדים
-            </h3>
+            <div>
+              <h3 className="font-bold text-emerald-800 text-sm">
+                השמות {monthLabel(filter)} — {placements.length} מועמדים
+              </h3>
+              <p className="text-[11px] text-emerald-700/80">לפי תאריך יצירת המועמד במערכת</p>
+              {fallbackPlacements.length > 0 && (
+                <p className="text-[11px] text-amber-700">{fallbackPlacements.length} בלי תאריך יצירה — נספרו לפי התאריך המוקדם ביותר שיש</p>
+              )}
+            </div>
             <button onClick={() => setShowPlacements(false)} className="text-emerald-500 hover:text-emerald-700 transition">
               <X size={16} />
             </button>
@@ -302,7 +311,17 @@ export default function Management({ candidates, positions, reports, onCandidate
                       </div>
                       <div>
                         <div className="font-semibold text-slate-800 text-sm">{c.name}</div>
-                        <div className="text-xs text-slate-500">{company}{c.startDate ? ` · ${fmtDate(c.startDate)}` : ''}</div>
+                        <div className="text-xs text-slate-500">
+                          {company}
+                          {candidateAnchor(c).day ? ` · נוצר ${fmtDate(candidateAnchor(c).day)}` : ''}
+                          {c.startDate ? ` · התחיל ${fmtDate(c.startDate)}` : ''}
+                        </div>
+                        <div className="mt-1">
+                          <AttributionMonthField
+                            candidate={c}
+                            onPick={next => onCandidatesChange(candidates.map(item => item.id === c.id ? { ...next, updatedAt: new Date().toISOString() } : item))}
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
