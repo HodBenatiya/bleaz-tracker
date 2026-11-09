@@ -1,6 +1,6 @@
 import { findStoredMedia, readStoredFile } from './_ingest.js'
 import { downloadIncomingMedia, redactError } from './_provider.js'
-import { imageVisionAvailable, readImageCv, visionAcceptsMime } from './cvVision.js'
+import { imageVisionAvailable, readImageCv, visionAcceptsMime } from './_cvVision.js'
 import { imageMime, isRasterCv, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText.js'
 import { draftFromText, IMAGE_CV_STATUS, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft.js'
 import { requireUser } from './_auth.js'
