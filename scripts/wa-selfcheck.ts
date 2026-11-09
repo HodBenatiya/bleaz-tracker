@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, phoneKey, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
+import { applyKnownLid, buildWaThreads, isOwnWaIdentity, mergeWaMessages, mergeCandidateSave, messageKey, phoneKey, screeningNoteFields, stampStatusChange, toLocalPhone, toWhatsAppChatId } from '../src/utils/wa'
 import { messageIdOf, parseProviderWebhook } from '../src/utils/waParse'
 import type { Candidate } from '../src/types'
 
@@ -30,6 +30,26 @@ if (waha.kind === 'message') {
   assert.equal(waha.message.chatId, '972521234567@c.us')
   assert.equal(waha.message.type, 'document')
   assert.equal(waha.message.fileName, 'cv.pdf')
+}
+
+const image = parseProviderWebhook({
+  event: 'message',
+  payload: {
+    id: 'false_972521111111@c.us_IMG',
+    timestamp: 1667561485,
+    from: '972521111111@c.us',
+    fromMe: false,
+    body: '',
+    hasMedia: true,
+    media: { mimetype: 'image/jpeg', caption: 'הנה תמונה', url: 'http://localhost:3000/api/files/a.jpg' },
+  },
+})
+assert.equal(image.kind, 'message')
+if (image.kind === 'message') {
+  assert.equal(image.message.type, 'image')
+  assert.equal(image.message.text, 'הנה תמונה')
+  assert.equal(image.message.hasMedia, true)
+  assert.equal(image.message.downloadUrl, 'http://localhost:3000/api/files/a.jpg')
 }
 
 const mine = parseProviderWebhook({
@@ -239,5 +259,22 @@ if (lidPayload.kind === 'message') {
   assert.equal(lidPayload.message.phoneJid, '972521112233@c.us')
   assert.equal(lidPayload.message.lid, '268371165761674@lid')
 }
+
+const freshNote = screeningNoteFields(undefined, '  עבדה במוקד, זמינה למשרה מלאה  ', '2026-11-08T12:00:00.000Z', 'n1')
+assert.equal(freshNote.notes, 'עבדה במוקד, זמינה למשרה מלאה')
+assert.deepEqual(freshNote.noteHistory, [])
+
+const withHistory = screeningNoteFields(
+  { notes: 'הערה ישנה', noteHistory: [{ id: 'old', text: 'הערה ישנה', createdAt: '2026-11-01T00:00:00.000Z' }] },
+  'שיחת סינון: ניסיון במכירות',
+  '2026-11-08T12:00:00.000Z',
+  'n2',
+)
+assert.equal(withHistory.notes, 'שיחת סינון: ניסיון במכירות')
+assert.equal(withHistory.noteHistory.length, 2)
+assert.equal(withHistory.noteHistory[1].text, 'שיחת סינון: ניסיון במכירות')
+
+const sameAgain = screeningNoteFields(withHistory, 'שיחת סינון: ניסיון במכירות', '2026-11-08T13:00:00.000Z', 'n3')
+assert.equal(sameAgain.noteHistory.length, 2)
 
 console.log('wa selfcheck ok')

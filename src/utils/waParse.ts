@@ -154,14 +154,19 @@ function parseWahaMessage(payload: Record<string, any>, directionHint?: 'in' | '
   const id = messageIdOf(payload.id)
   if (!id) return null
   const media = payload.media && typeof payload.media === 'object' ? payload.media : null
-  const mime = typeof media?.mimetype === 'string' ? media.mimetype : undefined
+  const mime = typeof media?.mimetype === 'string' ? media.mimetype : typeof media?.mimeType === 'string' ? media.mimeType : undefined
   const fileName = typeof media?.filename === 'string' && media.filename ? media.filename : undefined
   const downloadUrl = typeof media?.url === 'string' && media.url ? media.url : undefined
+  const caption = typeof media?.caption === 'string' ? media.caption : ''
   const hasMedia = payload.hasMedia === true || !!downloadUrl
   const vcard = Array.isArray(payload.vCards) && payload.vCards.length ? String(payload.vCards[0]) : ''
   let type: WaMessageType = 'text'
   let text = typeof payload.body === 'string' ? payload.body : ''
-  if (hasMedia) type = typeFromMime(mime, fileName)
+  if (!text && caption) text = caption
+  if (hasMedia) {
+    type = typeFromMime(mime, fileName)
+    if (type === 'other') type = 'document'
+  }
   else if (vcard) { type = 'contact'; text = text || 'איש קשר' }
   else if (payload.location) { type = 'location'; text = text || 'מיקום' }
   const direction: 'in' | 'out' = directionHint ?? (payload.fromMe ? 'out' : 'in')

@@ -208,6 +208,49 @@ export async function sendNotify(phone: string, text: string): Promise<void> {
   await sendGreen(chatId, text, 'main')
 }
 
+export type WahaMediaKind = 'image' | 'video' | 'file' | 'voice'
+
+/** Send media. Image/video fall back to sendFile if that route is missing on an older Core build. */
+export async function sendWahaMedia(input: {
+  chatId: string
+  kind: WahaMediaKind
+  mimetype: string
+  filename: string
+  dataBase64: string
+  caption?: string
+}): Promise<{ id: string }> {
+  const { base, key, session } = wahaCreds()
+  const chatId = toWhatsAppChatId(input.chatId)
+  if (!chatId) throw new Error('invalid phone')
+  const order: Array<'sendImage' | 'sendVideo' | 'sendFile' | 'sendVoice'> =
+    input.kind === 'image' ? ['sendImage', 'sendFile']
+    : input.kind === 'video' ? ['sendVideo', 'sendFile']
+    :     input.kind === 'voice' ? ['sendVoice', 'sendFile']
+    : ['sendFile']
+  let last = 'waha media send failed'
+  for (const endpoint of order) {
+    const body: Record<string, unknown> = {
+      session,
+      chatId,
+      caption: input.caption || undefined,
+      file: { mimetype: input.mimetype, filename: input.filename, data: input.dataBase64 },
+    }
+    if (endpoint === 'sendVoice') body.convert = true
+    const { ok, status, data } = await postJson(
+      `${base}/api/${endpoint}`,
+      body,
+      key ? { 'X-Api-Key': key } : {},
+    )
+    if (status >= 200 && status < 300) {
+      return { id: messageIdOf(data) || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }
+    }
+    last = redactError(new Error(String(data?.message || data?.error || data?.exception || `waha ${endpoint} ${status}`)))
+    const missing = status === 404 || status === 405 || status === 501 || /plus|not implemented|cannot post/i.test(last)
+    if (!missing || endpoint === order[order.length - 1]) break
+  }
+  throw new Error(last)
+}
+
 async function sendWaha(chatId: string, text: string): Promise<{ id: string }> {
   const { base, key, session } = wahaCreds()
   const { ok, status, data } = await postJson(`${base}/api/sendText`, {
@@ -241,34 +284,59 @@ async function sendGreen(chatId: string, text: string, which: 'main' | 'inbox'):
 const MAX_DOC = 12 * 1024 * 1024
 const MAX_HEAVY = 4 * 1024 * 1024
 
+function reachableMediaUrl(url: string): string {
+  const base = trimBase(process.env.WAHA_URL || '')
+  if (!url) return ''
+  if (url.startsWith('/') && base) return base + url
+  try {
+    const parsed = new URL(url)
+    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') && base) {
+      return base + parsed.pathname + parsed.search
+    }
+  } catch {
+    return ''
+  }
+  return url
+}
+
+async function readMediaResponse(resp: Response, msg: ParsedMessage): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  if (!resp.ok) return null
+  const mime = (resp.headers.get('content-type') || msg.mimeType || 'application/octet-stream').split(';')[0]
+  if (mime.includes('application/json')) return null
+  const len = Number(resp.headers.get('content-length') || 0)
+  const limit = msg.type === 'video' ? 20 * 1024 * 1024 : msg.type === 'audio' ? 16 * 1024 * 1024 : MAX_DOC
+  if (len > limit) return null
+  const bytes = new Uint8Array(await resp.arrayBuffer())
+  if (!bytes.byteLength || bytes.byteLength > limit) return null
+  return { bytes, mime }
+}
+
 export async function downloadIncomingMedia(msg: ParsedMessage): Promise<{ bytes: Uint8Array; mime: string } | null> {
-  let url = msg.downloadUrl || ''
+  let url = reachableMediaUrl(msg.downloadUrl || '')
   if (!url && msg.hasMedia) {
     url = (providerName() === 'waha' ? await wahaMediaUrl(msg) : await greenMediaUrl(msg)) || ''
+    url = reachableMediaUrl(url)
   }
-  if (!url) return null
-  if (url.startsWith('/')) {
-    const base = trimBase(process.env.WAHA_URL || '')
-    if (!base) return null
-    url = base + url
-  }
-  const headers: Record<string, string> = {}
   const wahaBase = trimBase(process.env.WAHA_URL || '')
   const wahaKey = process.env.WAHA_API_KEY || ''
-  if (wahaKey && (url.includes('/api/files/') || (wahaBase && url.startsWith(wahaBase)))) {
+  const headers: Record<string, string> = {}
+  if (wahaKey && url && (url.includes('/api/files/') || (wahaBase && url.startsWith(wahaBase)))) {
     headers['X-Api-Key'] = wahaKey
   }
   try {
-    const resp = await fetch(url, { headers, signal: AbortSignal.timeout(8000) })
-    if (!resp.ok) return null
-    const mime = (resp.headers.get('content-type') || msg.mimeType || 'application/octet-stream').split(';')[0]
-    const len = Number(resp.headers.get('content-length') || 0)
-    const heavy = msg.type === 'audio' || msg.type === 'video'
-    const limit = heavy ? MAX_HEAVY : MAX_DOC
-    if (len > limit) return null
-    const bytes = new Uint8Array(await resp.arrayBuffer())
-    if (bytes.byteLength > limit) return null
-    return { bytes, mime }
+    if (url) {
+      const resp = await fetch(url, { headers, signal: AbortSignal.timeout(12000) })
+      const file = await readMediaResponse(resp, msg)
+      if (file) return file
+    }
+    if (msg.hasMedia && providerName() === 'waha') {
+      const again = reachableMediaUrl((await wahaMediaUrl(msg)) || '')
+      if (again && again !== url) {
+        const resp = await fetch(again, { headers: { ...headers, ...(wahaKey ? { 'X-Api-Key': wahaKey } : {}) }, signal: AbortSignal.timeout(12000) })
+        return await readMediaResponse(resp, msg)
+      }
+    }
+    return null
   } catch (err) {
     console.error('media download failed', redactError(err))
     return null

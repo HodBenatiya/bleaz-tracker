@@ -222,6 +222,8 @@ export interface Candidate {
   paidDate?: string         // תאריך קבלת תשלום (YYYY-MM-DD)
   createdAt: string
   updatedAt: string
+  /** YYYY-MM. When set, placement metrics use this month instead of the creation month. */
+  attributionMonth?: string
 
   // ── וואטסאפ ──
   waMessages?: WaMessage[]
@@ -245,6 +247,7 @@ export interface WaMessage {
   fileName?: string
   mimeType?: string
   fileUrl?: string
+  filePath?: string
   caption?: string
   senderName?: string
   status?: WaDeliveryStatus
