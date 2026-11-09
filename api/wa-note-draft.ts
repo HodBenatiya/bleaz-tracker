@@ -3,6 +3,7 @@ import { downloadIncomingMedia, redactError } from './_provider.js'
 import { extractCvText } from '../src/utils/extractCvText.js'
 import { draftFromText } from '../src/utils/noteDraft.js'
 import { looksLikeCv } from '../src/utils/wa.js'
+import { requireUser } from './_auth.js'
 
 interface IncomingMessage {
   id?: string
@@ -94,6 +95,7 @@ async function polishWithLlm(chat: string, cv: string, fallback: string): Promis
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })
+  if (!(await requireUser(req, res))) return
   const messages = Array.isArray(req.body?.messages) ? req.body.messages as IncomingMessage[] : []
   const chatId = String(req.body?.chatId || '')
   const incoming = messages.filter(message => message?.direction !== 'out').slice(-40)

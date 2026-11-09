@@ -201,9 +201,9 @@ function safeStorageName(name: string): string {
 
 function storageClient() {
   const url = process.env.VITE_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
-  if (!url || !key) throw new Error('missing supabase env')
-  return createClient(url, key)
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) throw new Error('missing supabase service role')
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
 export async function uploadWaFile(chatId: string, fileName: string, bytes: Uint8Array, mime: string): Promise<string | null> {

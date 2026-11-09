@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import type { View, DailyReport, SavedPosition, PipelineCompany, Task, Candidate, WaInboxLead, WaSessionState } from './types'
 import {
   loadReports, upsertReport, deleteReport,
@@ -25,6 +26,7 @@ import Board from './components/Board'
 import Management from './components/Management'
 import MetaPage from './components/MetaPage'
 import WaInbox from './components/WaInbox'
+import LoginScreen from './components/LoginScreen'
 
 // ── Local upsert helper (keeps state consistent before DB responds) ──
 function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[] {
@@ -47,9 +49,24 @@ export default function App() {
   const [waInboxError,  setWaInboxError]  = useState<string | null>(null)
   const [editingReport, setEditingReport] = useState<DailyReport | null>(null)
   const [loading,       setLoading]       = useState(true)
+  const [authReady,     setAuthReady]     = useState(false)
+  const [session,       setSession]       = useState<Session | null>(null)
+  const [recovery,      setRecovery]      = useState(false)
+  const signedIn = !!session && !recovery
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      setSession(next)
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true)
+      setAuthReady(true)
+    })
+    return () => data.subscription.unsubscribe()
+  }, [])
 
   // ── Initial data load + optional localStorage migration ──
   useEffect(() => {
+    if (!signedIn) return
+    let cancelled = false
     async function init() {
       setLoading(true)
       const [r, p, pl, t, c, box] = await Promise.all([
@@ -69,6 +86,7 @@ export default function App() {
         setPipeline(pl)
         setTasks(t)
       }
+      if (cancelled) return
       setCandidates(c)
       setWaInbox(box.rows)
       setWaSession(box.session)
@@ -76,10 +94,12 @@ export default function App() {
       setLoading(false)
     }
     init()
-  }, [])
+    return () => { cancelled = true }
+  }, [signedIn])
 
   // ── Real-time subscriptions (sync between Hod and Tzachi) ──
   useEffect(() => {
+    if (!signedIn) return
     const channel = supabase.channel('bleaz-realtime')
 
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reports' }, payload => {
@@ -135,7 +155,7 @@ export default function App() {
       supabase.removeChannel(channel)
       supabase.removeChannel(waChannel)
     }
-  }, [])
+  }, [signedIn])
 
   // ── Handlers ──
   const handleSave = useCallback((report: DailyReport) => {
@@ -196,6 +216,7 @@ export default function App() {
   }, [candidates])
 
   useEffect(() => {
+    if (!signedIn) return
     const timer = setInterval(() => {
       loadWaInbox().then(box => {
         if (box.error) return
@@ -205,7 +226,7 @@ export default function App() {
       })
     }, 8000)
     return () => clearInterval(timer)
-  }, [])
+  }, [signedIn])
 
   const patchCandidate = useCallback((next: Candidate) => {
     setCandidates(prev => prev.map(c => c.id === next.id ? next : c))
@@ -227,6 +248,18 @@ export default function App() {
   const waUnread = (candidates ?? []).reduce((sum, c) => sum + (c?.waUnread ?? 0), 0)
     + (waInbox ?? []).reduce((sum, lead) => sum + (!lead || lead.candidateId ? 0 : (lead.unread ?? 0)), 0)
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <p className="text-slate-500">טוען…</p>
+      </div>
+    )
+  }
+
+  if (!signedIn) {
+    return <LoginScreen recovery={recovery} onPasswordSaved={() => setRecovery(false)} />
+  }
+
   // ── Loading screen ──
   if (loading) {
     return (
@@ -240,7 +273,15 @@ export default function App() {
   }
 
   return (
-    <Layout view={view} onNav={handleNav} onNewDay={handleNewDay} tasks={tasks} waUnread={waUnread}>
+    <Layout
+      view={view}
+      onNav={handleNav}
+      onNewDay={handleNewDay}
+      tasks={tasks}
+      waUnread={waUnread}
+      accountEmail={session?.user.email || ''}
+      onLogout={() => { supabase.auth.signOut() }}
+    >
       {view === 'dashboard' && (
         <Dashboard
           reports={reports}

@@ -2,6 +2,7 @@ import type { MatchCandidateInput, MatchHit, MatchJobInput } from '../src/utils/
 import { rankCandidates } from '../src/utils/matchCandidates.js'
 import { CANDIDATE_STATUS_LABELS, type CandidateStatus } from '../src/types/index.js'
 import { db } from './_db.js'
+import { requireUser } from './_auth.js'
 import { redactError } from './_provider.js'
 import { toWhatsAppChatId } from '../src/utils/wa.js'
 
@@ -112,6 +113,7 @@ function applyOrder(hits: MatchHit[], ids: string[] | null): MatchHit[] {
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })
+  if (!(await requireUser(req, res))) return
   const jobId = String(req.body?.jobId || '').trim()
   if (!jobId) return res.status(400).json({ ok: false, error: 'חסר מזהה משרה' })
 

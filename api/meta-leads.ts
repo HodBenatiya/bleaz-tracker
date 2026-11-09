@@ -1,9 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
+import { db } from './_db.js'
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.VITE_SUPABASE_ANON_KEY!
-)
+const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
 // ── GET: אימות webhook מול Meta ──────────────────────────────────────────────
 // Meta שולחת GET עם hub.mode, hub.challenge, hub.verify_token
