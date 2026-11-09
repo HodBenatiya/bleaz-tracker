@@ -1,3 +1,4 @@
+import { contentDisposition } from '../src/utils/storageKey.js'
 import { findStoredMedia, openStoredMedia } from './_ingest.js'
 import { downloadIncomingMedia, redactError } from './_provider.js'
 import { requireUser } from './_auth.js'
@@ -45,11 +46,10 @@ export default async function handler(req: any, res: any) {
     })
     if (!file) return res.status(404).json({ error: 'media unavailable' })
     const download = queryValue(req.query?.download) === '1'
-    const filename = (stored.fileName || 'file').replace(/["\r\n]/g, '')
     res.statusCode = 200
     res.setHeader('Content-Type', file.mime)
     res.setHeader('Content-Length', String(file.bytes.byteLength))
-    res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${filename}"`)
+    res.setHeader('Content-Disposition', contentDisposition(download ? 'attachment' : 'inline', stored.fileName || 'file'))
     res.setHeader('Cache-Control', 'private, max-age=3600')
     return res.end(Buffer.from(file.bytes))
   } catch (err) {

@@ -1,3 +1,4 @@
+-- DO NOT RUN: disables RLS; production uses schema_auth_rls.sql
 -- ═══════════════════════════════════════════════
 -- BLEAZ Tracker — Supabase Schema
 -- הרץ את הקוד הזה ב-Supabase SQL Editor

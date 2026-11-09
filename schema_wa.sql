@@ -1,3 +1,4 @@
+-- DO NOT RUN: disables RLS; production uses schema_auth_rls.sql
 -- תיבת וואטסאפ. הודעות של מועמד נשמרות בתוך candidates.data.waMessages.
 -- כאן נשמרים רק לידים שעדיין לא שויכו, וסטטוס הסשן (wa_session).
 -- הריצו ב-Supabase SQL Editor. אין כאן נתוני מועמדים.

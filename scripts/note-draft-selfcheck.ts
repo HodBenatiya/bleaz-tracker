@@ -188,4 +188,11 @@ try {
   else process.env.OPENAI_MODEL = prevModel
 }
 
+assert.equal(inspectCv(pdf, 'application/pdf', 'cv.PDF').kind, 'text')
+assert.equal(inspectCv(zip, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'cv.docx').kind, 'text')
+assert.equal(inspectCv(pagesPdf, 'application/x-iwork-pages-sffpages', 'a.pages').kind, 'text')
+assert.equal(inspectCv(previewOnly, '', 'only.pages').kind, 'image')
+assert.equal(inspectCv(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 'image/jpeg', 'photo.jpg').kind, 'image')
+assert.equal(inspectCv(new Uint8Array([1, 2, 3, 4]), 'application/octet-stream', 'mystery.bin').kind, 'unsupported')
+
 console.log('note draft selfcheck ok')

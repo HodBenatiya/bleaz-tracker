@@ -1,3 +1,4 @@
+-- DO NOT RUN: disables RLS; production uses schema_auth_rls.sql
 -- הרץ את זה ב-Supabase SQL Editor
 -- מוסיף טבלת מועמדים למערכת
 

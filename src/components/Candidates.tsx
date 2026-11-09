@@ -841,7 +841,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   {viewing.source && <span className="flex items-center gap-1"><User size={11} className="text-slate-400" />{viewing.source}</span>}
                   {viewing.positionType && <span className="flex items-center gap-1"><Briefcase size={11} className="text-slate-400" />{viewing.positionType}</span>}
                   {viewing.cvUrl && (
-                    <button type="button" onClick={() => { signedStorageUrl(viewing.cvUrl || '').then(url => window.open(url, '_blank', 'noopener')).catch(() => alert('לא הצלחנו לפתוח את הקובץ')) }}
+                    <button type="button" title={viewing.cvFileName || 'קורות חיים'} onClick={() => { signedStorageUrl(viewing.cvUrl || '', viewing.cvFileName).then(url => window.open(url, '_blank', 'noopener')).catch(() => alert('לא הצלחנו לפתוח את הקובץ')) }}
                       className="flex items-center gap-1 text-brand-600 hover:text-brand-800 hover:underline font-medium">
                       <FileText size={11} /> {viewing.cvFileName || 'קורות חיים'} <ExternalLink size={10} />
                     </button>
