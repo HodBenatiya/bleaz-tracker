@@ -1,104 +1,98 @@
 import { unzipSync } from 'fflate'
-import { inflateRawSync, inflateSync } from 'node:zlib'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { inflateRawSync } from 'node:zlib'
 import { looksLikeCv } from './wa'
 
 const MAX_TEXT = 20_000
+const MAX_PDF_PAGES = 12
 
-function pushText(parts: string[], value: string) {
-  const clean = value.replace(/\u0000/g, '').replace(/[^\S\n]+/g, ' ').trim()
-  if (clean.length >= 2 && /[\p{L}\p{N}]/u.test(clean)) parts.push(clean)
-}
+type PdfTextItem = { str?: string; dir?: string; transform?: number[] }
 
-function decodePdfLiteral(bytes: Uint8Array): string[] {
-  const parts: string[] = []
-  let i = 0
-  while (i < bytes.length) {
-    if (bytes[i] !== 0x28) { i++; continue }
-    const chars: number[] = []
-    let depth = 1
-    i++
-    while (i < bytes.length && depth > 0) {
-      const byte = bytes[i]
-      if (byte === 0x5c) {
-        const next = bytes[++i]
-        if (next === undefined) break
-        if (next >= 0x30 && next <= 0x37) {
-          let oct = String.fromCharCode(next)
-          for (let extra = 0; extra < 2 && bytes[i + 1] >= 0x30 && bytes[i + 1] <= 0x37; extra++) {
-            oct += String.fromCharCode(bytes[++i])
-          }
-          chars.push(parseInt(oct, 8) & 0xff)
-        } else if (next === 0x6e) chars.push(10)
-        else if (next === 0x72) chars.push(13)
-        else if (next === 0x74) chars.push(9)
-        else chars.push(next)
-      } else if (byte === 0x28) {
-        depth++
-        chars.push(byte)
-      } else if (byte === 0x29) {
-        depth--
-        if (depth > 0) chars.push(byte)
-      } else chars.push(byte)
-      i++
-    }
-    if (chars.length > 0 && chars.length < 800) {
-      pushText(parts, new TextDecoder('utf-8', { fatal: false }).decode(Uint8Array.from(chars)))
-    }
-    i++
+let workerReady: Promise<void> | null = null
+
+function ensurePdfWorker(): Promise<void> {
+  if (!workerReady) {
+    workerReady = import('pdfjs-dist/legacy/build/pdf.worker.mjs').then(mod => {
+      const target = globalThis as typeof globalThis & { pdfjsWorker?: { WorkerMessageHandler: unknown } }
+      target.pdfjsWorker = { WorkerMessageHandler: mod.WorkerMessageHandler }
+    })
   }
-  return parts
+  return workerReady
 }
 
-function decodePdfHex(bytes: Uint8Array): string[] {
-  const latin = Buffer.from(bytes).toString('latin1')
-  const parts: string[] = []
-  const pattern = /<([0-9A-Fa-f\s]{8,})>/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(latin))) {
-    const hex = match[1].replace(/\s/g, '')
-    if (hex.length < 8 || hex.length % 2) continue
-    const raw = Buffer.from(hex, 'hex')
-    if (raw[0] === 0xfe && raw[1] === 0xff && raw.length >= 4) {
-      const swapped = Buffer.alloc(raw.length - 2)
-      for (let i = 2; i + 1 < raw.length; i += 2) {
-        swapped[i - 2] = raw[i + 1]
-        swapped[i - 1] = raw[i]
-      }
-      pushText(parts, swapped.toString('utf16le'))
-    }
+function isCvPrintable(ch: string): boolean {
+  const code = ch.codePointAt(0) || 0
+  if (ch === '\n' || ch === '\r' || ch === '\t') return true
+  if (code >= 0x20 && code <= 0x7e) return true
+  return code >= 0x0590 && code <= 0x05ff
+}
+
+/** Reject binary noise. A real CV is mostly letters; the old extractor scored ~0.34 printable. */
+export function isUsableCvText(text: string): boolean {
+  const raw = text.replace(/\u0000/g, '')
+  if (raw.trim().length < 8) return false
+  let printable = 0
+  let letters = 0
+  for (const ch of raw) {
+    if (isCvPrintable(ch)) printable++
+    if (/[\p{Script=Hebrew}A-Za-z]/u.test(ch)) letters++
   }
-  return parts
+  if (printable / raw.length < 0.6) return false
+  if (letters < 8) return false
+  if (letters / raw.length < 0.25) return false
+  return true
 }
 
-function inflatePdfStreams(bytes: Uint8Array): Uint8Array[] {
-  const latin = Buffer.from(bytes).toString('latin1')
-  const streams: Uint8Array[] = []
-  let from = 0
-  while (from < latin.length) {
-    const marker = latin.indexOf('/FlateDecode', from)
-    if (marker < 0) break
-    const streamAt = latin.indexOf('stream', marker)
-    const endAt = streamAt >= 0 ? latin.indexOf('endstream', streamAt) : -1
-    if (streamAt < 0 || endAt < 0) break
-    let start = streamAt + 'stream'.length
-    if (bytes[start] === 0x0d) start++
-    if (bytes[start] === 0x0a) start++
-    let stop = endAt
-    if (bytes[stop - 1] === 0x0a) stop--
-    if (bytes[stop - 1] === 0x0d) stop--
-    const slice = bytes.subarray(start, stop)
-    try { streams.push(inflateSync(slice)) } catch {
-      try { streams.push(inflateRawSync(slice)) } catch { /* not a readable stream */ }
+function linesFromPdfItems(items: PdfTextItem[]): string {
+  const rows: { y: number; cells: { x: number; str: string; dir: string }[] }[] = []
+  for (const item of items) {
+    const str = (item.str || '').replace(/\u0000/g, '')
+    if (!str.trim() || !item.transform) continue
+    const x = item.transform[4] || 0
+    const y = Math.round(item.transform[5] || 0)
+    let row = rows.find(entry => Math.abs(entry.y - y) <= 2)
+    if (!row) {
+      row = { y, cells: [] }
+      rows.push(row)
     }
-    from = endAt + 'endstream'.length
+    row.cells.push({ x, str, dir: item.dir || 'ltr' })
   }
-  return streams
+  rows.sort((a, b) => b.y - a.y)
+  return rows.map(row => {
+    const rtl = row.cells.filter(cell => cell.dir === 'rtl').length >= row.cells.filter(cell => cell.dir !== 'rtl').length
+    row.cells.sort((a, b) => rtl ? b.x - a.x : a.x - b.x)
+    return row.cells.map(cell => cell.str).join(' ').replace(/[^\S\n]+/g, ' ').trim()
+  }).filter(Boolean).join('\n')
 }
 
-export function extractPdfText(bytes: Uint8Array): string {
-  const chunks = [bytes, ...inflatePdfStreams(bytes)]
-  const parts = chunks.flatMap(chunk => [...decodePdfLiteral(chunk), ...decodePdfHex(chunk)])
-  return [...new Set(parts)].join('\n').slice(0, MAX_TEXT)
+export async function extractPdfText(bytes: Uint8Array): Promise<string> {
+  if (!bytes?.byteLength) return ''
+  await ensurePdfWorker()
+  const task = getDocument({
+    data: new Uint8Array(bytes),
+    disableFontFace: true,
+    useSystemFonts: false,
+    useWorkerFetch: false,
+    isOffscreenCanvasSupported: false,
+    verbosity: 0,
+  })
+  try {
+    const doc = await task.promise
+    const parts: string[] = []
+    const pages = Math.min(doc.numPages, MAX_PDF_PAGES)
+    for (let i = 1; i <= pages; i++) {
+      const page = await doc.getPage(i)
+      const content = await page.getTextContent()
+      const line = linesFromPdfItems(content.items as PdfTextItem[])
+      if (line) parts.push(line)
+    }
+    const text = parts.join('\n').trim()
+    return isUsableCvText(text) ? text.slice(0, MAX_TEXT) : ''
+  } catch {
+    return ''
+  } finally {
+    await task.destroy().catch(() => undefined)
+  }
 }
 
 function xmlToText(xml: string): string {
@@ -221,9 +215,9 @@ function declaredDocx(fileName: string, mime: string): boolean {
   return fileName.endsWith('.docx') || mime.includes('wordprocessingml')
 }
 
-function pdfPayload(bytes: Uint8Array): CvPayload {
+async function pdfPayload(bytes: Uint8Array): Promise<CvPayload> {
   if (!isPdfBytes(bytes)) return { kind: 'unsupported' }
-  const text = extractPdfText(bytes).trim()
+  const text = (await extractPdfText(bytes)).trim()
   return text ? { kind: 'text', text } : { kind: 'empty' }
 }
 
@@ -255,7 +249,7 @@ function pickPagesImage(names: string[]): string | null {
   return images[0] || null
 }
 
-function inspectPages(bytes: Uint8Array): CvPayload {
+async function inspectPages(bytes: Uint8Array): Promise<CvPayload> {
   if (!isZipBytes(bytes)) return { kind: 'unsupported' }
   let files: Record<string, Uint8Array>
   try {
@@ -275,7 +269,7 @@ function inspectPages(bytes: Uint8Array): CvPayload {
   let sawPdf = false
   if (pdfName && files[pdfName]?.byteLength) {
     sawPdf = true
-    const text = extractPdfText(files[pdfName]).trim()
+    const text = (await extractPdfText(files[pdfName])).trim()
     if (text) return { kind: 'text', text }
   }
   const imageName = pickPagesImage(names)
@@ -285,12 +279,12 @@ function inspectPages(bytes: Uint8Array): CvPayload {
   return sawPdf ? { kind: 'empty' } : { kind: 'unsupported' }
 }
 
-export function inspectCv(bytes: Uint8Array, mime?: string, fileName?: string): CvPayload {
+export async function inspectCv(bytes: Uint8Array, mime?: string, fileName?: string): Promise<CvPayload> {
   if (!bytes?.byteLength) return { kind: 'unsupported' }
   const name = (fileName || '').toLowerCase()
   const type = (mime || '').toLowerCase()
   if (isPagesFile(fileName, mime)) {
-    const pages = inspectPages(bytes)
+    const pages = await inspectPages(bytes)
     if (pages.kind !== 'unsupported') return pages
     if (isPdfBytes(bytes)) return pdfPayload(bytes)
     return { kind: 'unsupported' }
@@ -310,8 +304,8 @@ export function inspectCv(bytes: Uint8Array, mime?: string, fileName?: string): 
   return { kind: 'unsupported' }
 }
 
-export function extractCvText(bytes: Uint8Array, mime?: string, fileName?: string): string {
-  const found = inspectCv(bytes, mime, fileName)
+export async function extractCvText(bytes: Uint8Array, mime?: string, fileName?: string): Promise<string> {
+  const found = await inspectCv(bytes, mime, fileName)
   return found.kind === 'text' ? found.text : ''
 }
 
@@ -322,13 +316,16 @@ export async function readCvForDraft(
   fileName: string | undefined,
   readImage: (bytes: Uint8Array, mime: string) => Promise<string | null>,
 ): Promise<CvReadResult> {
-  const found = inspectCv(bytes, mime, fileName)
-  if (found.kind === 'text') return { text: found.text, status: 'text' }
+  const found = await inspectCv(bytes, mime, fileName)
+  if (found.kind === 'text') {
+    if (!isUsableCvText(found.text)) return { text: '', status: 'empty' }
+    return { text: found.text, status: 'text' }
+  }
   if (found.kind === 'unsupported') return { text: '', status: 'unsupported' }
   if (found.kind === 'empty') return { text: '', status: 'empty' }
   try {
     const text = (await readImage(found.bytes, found.mime))?.replace(/\u0000/g, '').trim() || ''
-    if (text) return { text: text.slice(0, MAX_TEXT), status: 'text' }
+    if (text && isUsableCvText(text)) return { text: text.slice(0, MAX_TEXT), status: 'text' }
   } catch {
     /* keep the stored image and the Hebrew status in the draft */
   }

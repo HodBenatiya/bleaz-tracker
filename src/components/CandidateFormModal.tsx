@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { FileText, Loader2, Search, Upload, X } from 'lucide-react'
+import { cvStorageKey } from '../utils/storageKey'
+import { signedStorageUrl } from '../utils/storageUrl'
 import { supabase } from '../utils/supabase'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
@@ -55,7 +57,7 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
     if (!file) return
     setCvUploading(true)
     try {
-      const path = `${form.id}-${Date.now()}-${file.name}`
+      const path = cvStorageKey(form.id, file.name)
       const { error } = await supabase.storage.from('cvs').upload(path, file, { upsert: true })
       if (error) throw error
       setForm(current => ({ ...current, cvUrl: `cvs:${path}`, cvFileName: file.name }))
@@ -367,7 +369,18 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
           {form.cvUrl ? (
             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
               <FileText size={14} className="text-brand-600 shrink-0" />
-              <span className="text-sm text-slate-700 truncate flex-1">{form.cvFileName || 'קורות חיים'}</span>
+              <button
+                type="button"
+                title={form.cvFileName || 'קורות חיים'}
+                onClick={() => {
+                  signedStorageUrl(form.cvUrl || '', form.cvFileName)
+                    .then(url => window.open(url, '_blank', 'noopener'))
+                    .catch(() => alert('לא הצלחנו לפתוח את הקובץ'))
+                }}
+                className="text-sm text-slate-700 truncate flex-1 text-right hover:underline"
+              >
+                {form.cvFileName || 'קורות חיים'}
+              </button>
               <button type="button" onClick={() => setForm(f => ({ ...f, cvUrl: '', cvFileName: '' }))} className="text-slate-400 hover:text-red-500 shrink-0"><X size={14} /></button>
             </div>
           ) : (

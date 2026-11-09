@@ -15,6 +15,7 @@ import {
   toLocalPhone,
   toWhatsAppChatId,
 } from '../src/utils/wa.js'
+import { waMediaObjectPath } from '../src/utils/storageKey.js'
 import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse.js'
 import { db } from './_db.js'
 import { downloadIncomingMedia, fetchWahaContactCard, providerName, redactError, resolveWahaPhone } from './_provider.js'
@@ -194,10 +195,6 @@ async function alreadyStored(id: string, chatId: string, twin?: { text?: string;
   return data.some(row => ((row.data as WaInboxLead | undefined)?.messages ?? []).some(m => sameStoredMessage(m, needle)))
 }
 
-function safeStorageName(name: string): string {
-  const cleaned = name.replace(/[^\w.\-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-  return (cleaned || 'file').slice(-80)
-}
 
 function storageClient() {
   const url = process.env.VITE_SUPABASE_URL
@@ -207,8 +204,7 @@ function storageClient() {
 }
 
 export async function uploadWaFile(chatId: string, fileName: string, bytes: Uint8Array, mime: string): Promise<string | null> {
-  const key = threadKeyFromChat(chatId) || 'file'
-  const path = `whatsapp/${key}/${Date.now()}-${safeStorageName(fileName)}`
+  const path = waMediaObjectPath(threadKeyFromChat(chatId) || 'file', fileName)
   const client = storageClient()
   const body = bytes
   const options = { contentType: mime || 'application/octet-stream', upsert: true }
