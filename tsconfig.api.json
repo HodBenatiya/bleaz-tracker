@@ -13,5 +13,5 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["api/**/*.ts"]
+  "include": ["api/**/*.ts", "src/pdf-worker.d.ts"]
 }

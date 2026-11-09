@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { zipSync } from 'fflate'
-import { deflateRawSync } from 'node:zlib'
+import fontkit from '@pdf-lib/fontkit'
+import { PDFDocument } from 'pdf-lib'
 import { readImageCv } from '../api/_cvVision'
-import { extractCvText, extractDocxText, extractPdfText, inspectCv, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText'
+import { extractCvText, extractDocxText, extractPdfText, inspectCv, isUsableCvText, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText'
 import { draftFromText, extractNoteFacts, IMAGE_CV_STATUS, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft'
 import { looksLikeCv } from '../src/utils/wa'
 
@@ -28,8 +30,41 @@ assert.ok(facts.area.includes('חיפה'))
 assert.ok(facts.scope.includes('משרה חלקית'))
 assert.ok(facts.notes.some(note => note.includes('אין רישיון')))
 
-const pdf = Buffer.from('%PDF-1.1\n1 0 obj << /Length 5 >> stream\nBT (מכירות בתל אביב) Tj ET\nendstream\nendobj\n%%EOF')
-assert.match(extractPdfText(pdf), /מכירות בתל אביב/)
+async function hebrewPdf(lines: string[]): Promise<Uint8Array> {
+  const fontBytes = readFileSync(new URL('./fixtures/Alef-Regular.ttf', import.meta.url))
+  const pdf = await PDFDocument.create()
+  pdf.registerFontkit(fontkit)
+  const font = await pdf.embedFont(fontBytes, { subset: true })
+  const page = pdf.addPage([420, 640])
+  lines.forEach((line, index) => {
+    page.drawText(line, { font, size: 16, x: 36, y: 580 - index * 32 })
+  })
+  return new Uint8Array(await pdf.save())
+}
+
+const pdf = await hebrewPdf(['ניסיון במכירות בתל אביב', 'תואר ראשון ושירות לקוחות'])
+assert.ok(Buffer.from(pdf).includes(Buffer.from('FlateDecode')))
+const pdfText = await extractPdfText(pdf)
+assert.match(pdfText, /ניסיון במכירות בתל אביב/)
+assert.match(pdfText, /שירות לקוחות/)
+assert.equal(isUsableCvText(pdfText), true)
+
+const junk = Array.from({ length: 6084 }, (_, i) => String.fromCharCode(i % 256)).join('')
+const printable = [...junk].filter(ch => {
+  const code = ch.codePointAt(0) || 0
+  return ch === '\n' || ch === '\r' || ch === '\t' || (code >= 0x20 && code <= 0x7e)
+}).length
+assert.ok(printable / junk.length < 0.45)
+assert.equal(isUsableCvText(junk), false)
+assert.equal(isUsableCvText('#'.repeat(400)), false)
+const junkPdf = new Uint8Array(Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.from(junk)]))
+assert.equal(await extractPdfText(junkPdf), '')
+assert.equal((await inspectCv(junkPdf, 'application/pdf', 'cv.pdf')).kind, 'empty')
+const junkDraft = await readCvForDraft(junkPdf, 'application/pdf', 'cv.pdf', async () => {
+  throw new Error('vision should not run for a pdf')
+})
+assert.equal(junkDraft.status, 'empty')
+assert.equal(junkDraft.text, '')
 
 const xml = Buffer.from('<?xml version="1.0"?><w:document><w:p><w:t>ניסיון בביטוח</w:t></w:p><w:p><w:t>תואר</w:t></w:p></w:document>')
 const name = Buffer.from('word/document.xml')
@@ -40,28 +75,18 @@ local.writeUInt32LE(xml.length, 22)
 local.writeUInt16LE(name.length, 26)
 const zip = Buffer.concat([local, name, xml])
 assert.match(extractDocxText(zip), /ניסיון בביטוח/)
-assert.match(extractCvText(zip, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'cv.docx'), /תואר/)
+assert.match(await extractCvText(zip, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'cv.docx'), /תואר/)
 
-const compressed = deflateRawSync(Buffer.from('(שירות לקוחות)'))
-assert.match(extractPdfText(Buffer.concat([
-  Buffer.from('%PDF-1.4\n/FlateDecode /Length ' + compressed.length + ' >> stream\n'),
-  compressed,
-  Buffer.from('\nendstream\n'),
-])), /שירות לקוחות/)
-
-function pdfWith(text: string): Uint8Array {
-  return new Uint8Array(Buffer.from(`%PDF-1.4\n(${text}) Tj\n%%EOF`))
-}
-
+const otherPdf = await hebrewPdf(['לא זה הטקסט הנכון בכלל'])
 const pagesPdf = zipSync({
   'Index/Document.iwa': new Uint8Array([1, 2, 3, 4]),
-  'other/notes.pdf': pdfWith('לא זה'),
-  'QuickLook/Preview.pdf': pdfWith('מכירות בתל אביב'),
+  'other/notes.pdf': otherPdf,
+  'QuickLook/Preview.pdf': pdf,
   'preview.jpg': new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
 })
-assert.match(extractCvText(pagesPdf, 'application/x-iwork-pages-sffpages', 'קורות.pages'), /מכירות בתל אביב/)
-assert.doesNotMatch(extractCvText(pagesPdf, 'application/vnd.apple.pages', 'קורות.pages'), /לא זה/)
-assert.equal(inspectCv(pagesPdf, '', 'a.pages').kind, 'text')
+assert.match(await extractCvText(pagesPdf, 'application/x-iwork-pages-sffpages', 'קורות.pages'), /מכירות בתל אביב/)
+assert.doesNotMatch(await extractCvText(pagesPdf, 'application/vnd.apple.pages', 'קורות.pages'), /לא זה/)
+assert.equal((await inspectCv(pagesPdf, '', 'a.pages')).kind, 'text')
 assert.equal(looksLikeCv('a.pages', ''), true)
 assert.equal(looksLikeCv('scan.bin', 'application/x-iwork-pages-sffpages'), true)
 
@@ -78,7 +103,7 @@ const previewOnly = zipSync({
   'preview.jpg': new Uint8Array([9, 9, 9]),
   'Index/Document.iwa': new Uint8Array([4]),
 })
-const preview = inspectCv(previewOnly, 'application/x-iwork-pages-sffpages', 'cv.pages')
+const preview = await inspectCv(previewOnly, 'application/x-iwork-pages-sffpages', 'cv.pages')
 assert.equal(preview.kind, 'image')
 if (preview.kind === 'image') {
   assert.equal(preview.mime, 'image/jpeg')
@@ -91,7 +116,7 @@ assert.equal(previewText.status, 'text')
 assert.match(previewText.text, /מוקד/)
 
 const thumbnailOnly = zipSync({ 'QuickLook/Thumbnail.jpg': new Uint8Array([4, 5, 6]) })
-const thumbnail = inspectCv(thumbnailOnly, '', 'job.pages')
+const thumbnail = await inspectCv(thumbnailOnly, '', 'job.pages')
 assert.equal(thumbnail.kind, 'image')
 if (thumbnail.kind === 'image') assert.deepEqual([...thumbnail.bytes], [4, 5, 6])
 
@@ -99,18 +124,22 @@ const imagePdf = zipSync({
   'QuickLook/Preview.pdf': new Uint8Array(Buffer.from('%PDF-1.4\n%%EOF')),
   'preview.jpg': new Uint8Array([7, 7]),
 })
-assert.equal(inspectCv(imagePdf, '', 'scan.pages').kind, 'image')
+assert.equal((await inspectCv(imagePdf, '', 'scan.pages')).kind, 'image')
+const junkPages = zipSync({
+  'QuickLook/Preview.pdf': junkPdf,
+  'preview.jpg': new Uint8Array([8, 8, 8]),
+})
+assert.equal((await inspectCv(junkPages, '', 'scan.pages')).kind, 'image')
 
 const iwaOnly = zipSync({ 'Index/Document.iwa': new Uint8Array([1, 2, 3]) })
-assert.equal(inspectCv(iwaOnly, '', 'broken.pages').kind, 'unsupported')
-assert.equal(inspectCv(new Uint8Array([1, 2, 3, 4]), 'application/x-iwork-pages-sffpages', 'bad.pages').kind, 'unsupported')
-assert.equal(inspectCv(new Uint8Array([1, 2, 3]), 'application/pdf', 'cv.pdf').kind, 'unsupported')
-assert.equal(inspectCv(new Uint8Array([1, 2, 3]), 'application/rtf', 'קורות.rtf').kind, 'unsupported')
-assert.equal(inspectCv(new Uint8Array([0xff, 0xd8, 0xff]), 'image/jpeg', 'cv.jpg').kind, 'image')
-assert.equal(inspectCv(new Uint8Array([1]), 'image/heic', 'photo.heic').kind, 'image')
-if (inspectCv(new Uint8Array([1]), '', 'photo.heic').kind === 'image') {
-  assert.equal(inspectCv(new Uint8Array([1]), '', 'photo.heic').mime, 'image/heic')
-}
+assert.equal((await inspectCv(iwaOnly, '', 'broken.pages')).kind, 'unsupported')
+assert.equal((await inspectCv(new Uint8Array([1, 2, 3, 4]), 'application/x-iwork-pages-sffpages', 'bad.pages')).kind, 'unsupported')
+assert.equal((await inspectCv(new Uint8Array([1, 2, 3]), 'application/pdf', 'cv.pdf')).kind, 'unsupported')
+assert.equal((await inspectCv(new Uint8Array([1, 2, 3]), 'application/rtf', 'קורות.rtf')).kind, 'unsupported')
+assert.equal((await inspectCv(new Uint8Array([0xff, 0xd8, 0xff]), 'image/jpeg', 'cv.jpg')).kind, 'image')
+const heic = await inspectCv(new Uint8Array([1]), 'image/heic', 'photo.heic')
+assert.equal(heic.kind, 'image')
+if (heic.kind === 'image') assert.equal(heic.mime, 'image/heic')
 
 const imageDraft = draftFromText(chat, '', [IMAGE_CV_STATUS])
 assert.ok(imageDraft.startsWith('טיוטה אוטומטית – לבדוק'))
@@ -188,11 +217,11 @@ try {
   else process.env.OPENAI_MODEL = prevModel
 }
 
-assert.equal(inspectCv(pdf, 'application/pdf', 'cv.PDF').kind, 'text')
-assert.equal(inspectCv(zip, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'cv.docx').kind, 'text')
-assert.equal(inspectCv(pagesPdf, 'application/x-iwork-pages-sffpages', 'a.pages').kind, 'text')
-assert.equal(inspectCv(previewOnly, '', 'only.pages').kind, 'image')
-assert.equal(inspectCv(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 'image/jpeg', 'photo.jpg').kind, 'image')
-assert.equal(inspectCv(new Uint8Array([1, 2, 3, 4]), 'application/octet-stream', 'mystery.bin').kind, 'unsupported')
+assert.equal((await inspectCv(pdf, 'application/pdf', 'cv.PDF')).kind, 'text')
+assert.equal((await inspectCv(zip, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'cv.docx')).kind, 'text')
+assert.equal((await inspectCv(pagesPdf, 'application/x-iwork-pages-sffpages', 'a.pages')).kind, 'text')
+assert.equal((await inspectCv(previewOnly, '', 'only.pages')).kind, 'image')
+assert.equal((await inspectCv(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 'image/jpeg', 'photo.jpg')).kind, 'image')
+assert.equal((await inspectCv(new Uint8Array([1, 2, 3, 4]), 'application/octet-stream', 'mystery.bin')).kind, 'unsupported')
 
 console.log('note draft selfcheck ok')

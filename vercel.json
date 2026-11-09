@@ -1,4 +1,8 @@
 {
+  "rewrites": [
+    { "source": "/login", "destination": "/index.html" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
   "functions": {
     "api/remind.ts":          { "maxDuration": 15 },
     "api/add.ts":             { "maxDuration": 10 },
