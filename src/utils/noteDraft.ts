@@ -31,6 +31,12 @@ const EXPERIENCE: { label: string; terms: string[] }[] = [
 
 const HEADER = 'טיוטה אוטומטית – לבדוק'
 
+/** Shown when a CV arrived as a picture and no vision reader is connected. */
+export const IMAGE_CV_STATUS = 'קורות החיים התקבלו כתמונה – יפוענחו אוטומטית לאחר חיבור מנוע הניתוח'
+
+/** Shown for a file we cannot read. The draft stays local; nothing is sent to the candidate. */
+export const UNSUPPORTED_CV_STATUS = 'פורמט קובץ לא נתמך – בקשו מהמועמד PDF או Word'
+
 function has(text: string, term: string): boolean {
   return text.includes(term.toLowerCase())
 }

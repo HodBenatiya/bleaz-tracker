@@ -339,8 +339,9 @@ export function stampStatusChange(prev: Candidate | undefined, next: Candidate, 
 export function looksLikeCv(fileName?: string, mime?: string): boolean {
   const n = (fileName ?? '').toLowerCase()
   const m = (mime ?? '').toLowerCase()
-  if (/\.(pdf|docx?)$/.test(n)) return true
+  if (/\.(pdf|docx?|pages)$/.test(n)) return true
   if (m.includes('pdf') || m.includes('msword') || m.includes('wordprocessingml')) return true
+  if (m.includes('iwork-pages') || m.includes('sffpages') || m.includes('vnd.apple.pages')) return true
   if (/cv|resume|קורות/.test(n)) return true
   return false
 }

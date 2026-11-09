@@ -1,8 +1,8 @@
 import { findStoredMedia, readStoredFile } from './_ingest.js'
 import { downloadIncomingMedia, redactError } from './_provider.js'
-import { extractCvText } from '../src/utils/extractCvText.js'
-import { draftFromText } from '../src/utils/noteDraft.js'
-import { looksLikeCv } from '../src/utils/wa.js'
+import { imageVisionAvailable, readImageCv, visionAcceptsMime } from './cvVision.js'
+import { imageMime, isRasterCv, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText.js'
+import { draftFromText, IMAGE_CV_STATUS, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft.js'
 import { requireUser } from './_auth.js'
 
 interface IncomingMessage {
@@ -19,17 +19,17 @@ function clip(value: string, max = 8000): string {
   return value.replace(/(?:\+?972|0)5\d{8}/g, '').slice(0, max)
 }
 
-function isImage(message: IncomingMessage): boolean {
-  const mime = (message.mimeType || '').toLowerCase()
-  const name = (message.fileName || '').toLowerCase()
-  return mime.startsWith('image/') || message.type === 'image' || message.type === 'sticker' || /\.(png|jpe?g|webp|gif)$/.test(name)
+function remember(extra: string[], pinned: string[], note: string) {
+  extra.push(note)
+  if (!pinned.includes(note)) pinned.push(note)
 }
 
-function isReadableCv(message: IncomingMessage): boolean {
-  const mime = (message.mimeType || '').toLowerCase()
-  const name = (message.fileName || '').toLowerCase()
-  return name.endsWith('.pdf') || name.endsWith('.docx') || mime.includes('pdf') || mime.includes('wordprocessingml')
-    || looksLikeCv(message.fileName, message.mimeType)
+function keepPinned(draft: string, pinned: string[]): string {
+  let next = draft
+  for (const note of pinned) {
+    if (!next.includes(note)) next = `${next}\n${note}`
+  }
+  return next
 }
 
 async function fileBytes(message: IncomingMessage): Promise<Uint8Array | null> {
@@ -101,14 +101,18 @@ export default async function handler(req: any, res: any) {
   const incoming = messages.filter(message => message?.direction !== 'out').slice(-40)
   const chat = clip(incoming.map(message => String(message.text || '').trim()).filter(Boolean).join('\n'))
   const extra: string[] = []
+  const pinned: string[] = []
   const cvParts: string[] = []
-  const files = incoming.filter(message => isReadableCv(message) || (isImage(message) && looksLikeCv(message.fileName, message.mimeType))).slice(-2)
+  const files = selectCvMessages(incoming)
 
   for (const message of files) {
     const name = message.fileName || 'קובץ'
-    if (isImage(message) && !String(message.fileName || '').toLowerCase().match(/\.docx$|\.pdf$/)) {
-      extra.push(`צורף צילום (${name}) — לא חולץ טקסט מתמונה`)
-      continue
+    if (isRasterCv(message.fileName, message.mimeType)) {
+      const mime = imageMime(message.fileName, message.mimeType)
+      if (!imageVisionAvailable() || !visionAcceptsMime(mime)) {
+        remember(extra, pinned, IMAGE_CV_STATUS)
+        continue
+      }
     }
     const bytes = await fileBytes({ ...message, chatId: message.chatId || chatId })
     if (!bytes) {
@@ -116,8 +120,10 @@ export default async function handler(req: any, res: any) {
       continue
     }
     try {
-      const text = extractCvText(bytes, message.mimeType, message.fileName)
-      if (text.trim()) cvParts.push(text)
+      const result = await readCvForDraft(bytes, message.mimeType, message.fileName, readImageCv)
+      if (result.status === 'text' && result.text.trim()) cvParts.push(result.text)
+      else if (result.status === 'image') remember(extra, pinned, IMAGE_CV_STATUS)
+      else if (result.status === 'unsupported') remember(extra, pinned, UNSUPPORTED_CV_STATUS)
       else extra.push(`לא נמצא טקסט בקובץ ${name}`)
     } catch (err) {
       console.error('note draft extract', redactError(err))
@@ -132,7 +138,7 @@ export default async function handler(req: any, res: any) {
     try {
       const polished = await polishWithLlm(chat, cvParts.join('\n'), rules)
       if (polished) {
-        draft = polished
+        draft = keepPinned(polished, pinned)
         source = 'llm'
       }
     } catch (err) {
