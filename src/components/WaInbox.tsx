@@ -1,9 +1,11 @@
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowRight, Camera, CheckCheck, FileText, Loader2, MapPin, Mic, Paperclip, Search, Send, Smile, X } from 'lucide-react'
-import type { Candidate, CandidateStatus, SavedPosition, WaInboxLead, WaMessage, WaSessionState } from '../types'
-import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
+import type { Candidate, SavedPosition, WaInboxLead, WaMessage, WaSessionState } from '../types'
+import { CANDIDATE_STATUS_COLORS } from '../types'
+import CandidateFormModal from './CandidateFormModal'
+import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
-import { buildWaThreads, isIsraeliMobile, latestCv, mergeWaMessages, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
+import { buildWaThreads, mergeWaMessages, personName, phoneKey, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
   candidates: Candidate[]
@@ -16,11 +18,6 @@ interface Props {
   onPatchInbox: (next: WaInboxLead) => void
   onRefreshInbox: () => void
 }
-
-const STATUS_ORDER: CandidateStatus[] = [
-  'new', 'screening', 'call_scheduled', 'called', 'relevant', 'future_relevant',
-  'sent_to_client', 'interview_scheduled', 'started_working', 'placement_complete', 'irrelevant',
-]
 
 type ListFilter = 'all' | 'unread' | 'leads' | 'candidates'
 
@@ -118,15 +115,8 @@ function WaInboxScreen({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
-  const [assignOpen, setAssignOpen] = useState(false)
-  const [assigning, setAssigning] = useState(false)
-  const [assignError, setAssignError] = useState('')
-  const [name, setName] = useState('')
-  const [city, setCity] = useState('')
-  const [assignNote, setAssignNote] = useState('')
-  const [phoneOverride, setPhoneOverride] = useState('')
-  const [status, setStatus] = useState<CandidateStatus>('screening')
-  const [chosen, setChosen] = useState<string[]>([])
+  const [assignDraft, setAssignDraft] = useState<Candidate | null>(null)
+  const [assignEditing, setAssignEditing] = useState(false)
   const [attachment, setAttachment] = useState<{ file: File; url: string; kind: 'image' | 'video' | 'file' } | null>(null)
   const [recording, setRecording] = useState(false)
   const [recordMs, setRecordMs] = useState(0)
@@ -357,94 +347,55 @@ function WaInboxScreen({
   }
 
   const openAssign = (thread: WaThread) => {
-    const active = shownPositions.filter(p => p.isActive)
-    const existing = thread.candidate?.savedPositionIds?.length
-      ? thread.candidate.savedPositionIds
-      : thread.candidate?.savedPositionId ? [thread.candidate.savedPositionId] : []
-    setChosen(existing.length ? existing : (active.length === 1 ? [active[0].id] : []))
-    setStatus(thread.candidate?.status ?? 'screening')
-    setName('')
-    setCity(thread.candidate?.city ?? '')
-    const history = thread.candidate?.noteHistory ?? []
-    setAssignNote(history.length ? history[history.length - 1].text : (thread.candidate?.notes ?? ''))
-    setPhoneOverride('')
-    setAssignError('')
-    setAssignOpen(true)
-  }
-
-  const togglePosition = (id: string) => {
-    setChosen(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
-  }
-
-  const saveAssign = async () => {
-    if (!selected || assigning) return
-    setAssigning(true)
-    setAssignError('')
-    const now = new Date().toISOString()
-    const picked = shownPositions.filter(p => chosen.includes(p.id))
-    const positionType = picked.map(p => [p.companyName, p.positionTitle].filter(Boolean).join(' · ')).join(', ')
-    const typedPhone = phoneOverride.trim()
-    const phone = toLocalPhone(typedPhone || selected.phone) || selected.phone
-    const cv = latestCv(selected.messages)
-    const displayName = name.trim() || selected.candidate?.name || selected.title
-    const noted = screeningNoteFields(selected.candidate, assignNote, now, crypto.randomUUID())
-    let ok = false
-    if (selected.candidate) {
-      const next: Candidate = {
-        ...selected.candidate,
-        name: name.trim() || selected.candidate.name,
-        city: city.trim() || selected.candidate.city,
-        phone,
-        status,
-        notes: noted.notes,
-        noteHistory: noted.noteHistory,
-        savedPositionIds: chosen,
-        savedPositionId: chosen[0],
-        positionType: positionType || selected.candidate.positionType,
-        waMessages: selected.messages,
-        waUnread: 0,
-        waChatId: selected.chatId,
-        lastWaAt: selected.lastAt || selected.candidate.lastWaAt,
-        cvUrl: selected.candidate.cvUrl || cv?.url,
-        cvFileName: selected.candidate.cvFileName || cv?.name,
-        updatedAt: now,
-      }
-      ok = await onCandidatesChange(shownCandidates.map(c => c.id === next.id ? next : c))
+    const phone = toLocalPhone(thread.phone) || toLocalPhone(thread.candidate?.phone) || ''
+    const key = phoneKey(phone)
+    const pool = candidates.length ? candidates : shownCandidates
+    const existing = thread.candidate
+      || (key ? pool.find(item => phoneKey(item.phone) === key) : undefined)
+    if (existing) {
+      const history = existing.noteHistory ?? []
+      const noteText = history.length ? history[history.length - 1].text : (existing.notes ?? '')
+      setAssignDraft({ ...existing, phone: toLocalPhone(existing.phone) || existing.phone, notes: noteText })
+      setAssignEditing(true)
     } else {
-      const created: Candidate = {
-        id: crypto.randomUUID(),
-        name: displayName,
+      setAssignDraft({
+        ...emptyCandidate(),
+        name: personName(thread.title, phone),
         phone,
-        city: city.trim() || undefined,
-        status,
-        positionType,
         source: 'WhatsApp',
-        savedPositionId: chosen[0],
-        savedPositionIds: chosen,
-        nonaStatus: '',
-        notes: noted.notes,
-        noteHistory: noted.noteHistory,
-        waMessages: selected.messages,
-        waUnread: 0,
-        waChatId: selected.chatId,
-        lastWaAt: selected.lastAt,
-        cvUrl: cv?.url,
-        cvFileName: cv?.name,
-        createdAt: selected.inbox?.createdAt || now,
-        updatedAt: now,
-      }
-      ok = await onCandidatesChange([...shownCandidates, created])
-      if (ok && selected.inbox && !preview) {
-        const linked = await linkWaInbox(selected.inbox.id, created.id)
-        if (linked) onPatchInbox(linked)
-      }
+      })
+      setAssignEditing(false)
     }
-    setAssigning(false)
-    if (ok) setAssignOpen(false)
-    else setAssignError('השיוך נכשל. נסו שוב.')
   }
 
-  const choices = shownPositions.filter(p => p.isActive || chosen.includes(p.id))
+  const saveAssign = async (draft: Candidate) => {
+    if (!selected) return
+    const phone = toLocalPhone(draft.phone) || draft.phone.trim()
+    const prior = candidates.find(item => item.id === draft.id) || selected.candidate
+    const noted = screeningNoteFields(prior, draft.notes, new Date().toISOString(), crypto.randomUUID())
+    const linkedDraft: Candidate = {
+      ...draft,
+      phone,
+      notes: noted.notes,
+      noteHistory: noted.noteHistory,
+      source: draft.source || 'WhatsApp',
+      waMessages: mergeWaMessages(draft.waMessages, selected.messages),
+      waUnread: 0,
+      waChatId: selected.chatId || draft.waChatId,
+      waLid: selected.inbox?.lid || draft.waLid,
+      lastWaAt: selected.lastAt || draft.lastWaAt,
+    }
+    const base = candidates.some(item => item.id === linkedDraft.id) || candidates.length
+      ? candidates
+      : shownCandidates.filter(item => item.id === linkedDraft.id)
+    const ok = await onCandidatesChange(applyCandidateSave(base, linkedDraft, positions))
+    if (!ok) return
+    if (selected.inbox && !preview) {
+      const linked = await linkWaInbox(selected.inbox.id, linkedDraft.id)
+      if (linked) onPatchInbox(linked)
+    }
+    setAssignDraft(null)
+  }
 
   return (
     <div className="flex h-full min-h-[calc(100vh-4.5rem)] bg-[#efeae2]" dir="rtl">
@@ -495,7 +446,7 @@ function WaInboxScreen({
           {visible.map(t => (
             <button
               key={t.key}
-              onClick={() => { setSelectedKey(t.key); setAssignOpen(false); setSendError('') }}
+              onClick={() => { setSelectedKey(t.key); setAssignDraft(null); setSendError('') }}
               className={`w-full text-right px-3 py-3 flex gap-3 border-b border-slate-100 hover:bg-[#f5f6f6] ${selectedKey === t.key ? 'bg-[#f0f2f5]' : 'bg-white'}`}
             >
               <ContactAvatar name={t.title} url={t.avatarUrl} />
@@ -544,73 +495,6 @@ function WaInboxScreen({
                 שיוך
               </button>
             </header>
-
-            {assignOpen && (
-              <div className="bg-white border-b border-slate-200 px-4 py-3 space-y-3 shrink-0 max-h-[70vh] overflow-y-auto">
-                <div>
-                  <p className="font-bold text-slate-800">שיוך שיחה</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {selected.candidate
-                      ? 'המועמד כבר במערכת. השמירה תעדכן משרות, סטטוס והערה.'
-                      : 'הליד ייכנס לרשימת המועמדים עם היסטוריית השיחה.'}
-                  </p>
-                </div>
-                <label className="block">
-                  <span className="text-sm font-bold text-slate-800">הערה</span>
-                  <span className="block text-[11px] text-slate-500 mb-1">פרטי שיחת הסינון. נשמר כמו הערות בכרטיס המועמד.</span>
-                  <textarea
-                    value={assignNote}
-                    onChange={e => setAssignNote(e.target.value)}
-                    rows={8}
-                    placeholder="ניסיון, זמינות, מה עלה בשיחה..."
-                    className="input-field w-full text-sm leading-relaxed min-h-[9.5rem] resize-y"
-                  />
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <label className="text-xs text-slate-500">
-                    שם (לא חובה)
-                    <input value={name} onChange={e => setName(e.target.value)} placeholder={selected.title} className="input-field mt-1" />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    עיר (לא חובה)
-                    <input value={city} onChange={e => setCity(e.target.value)} placeholder="עיר מגורים" className="input-field mt-1" />
-                  </label>
-                </div>
-                {(selected.lid || !isIsraeliMobile(selected.phone)) && (
-                  <label className="text-xs text-slate-500 block">
-                    טלפון (אם חסר מספר רגיל)
-                    <input value={phoneOverride} onChange={e => setPhoneOverride(e.target.value)} placeholder="05XXXXXXXX" className="input-field mt-1" />
-                  </label>
-                )}
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">משרות פעילות</p>
-                  {choices.length === 0 && <p className="text-xs text-slate-400">אין משרות פעילות כרגע. אפשר לשייך בלי משרה.</p>}
-                  <div className="max-h-36 overflow-y-auto space-y-1">
-                    {choices.map(p => (
-                      <label key={p.id} className="flex items-center gap-2 text-sm text-slate-700">
-                        <input type="checkbox" checked={chosen.includes(p.id)} onChange={() => togglePosition(p.id)} />
-                        <span>{p.companyName}{p.positionTitle ? ` · ${p.positionTitle}` : ''}{p.city ? ` · ${p.city}` : ''}</span>
-                        {!p.isActive && <span className="text-[10px] text-slate-400">לא פעילה</span>}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <label className="text-xs text-slate-500 block">
-                  סטטוס
-                  <select value={status} onChange={e => setStatus(e.target.value as CandidateStatus)} className="input-field mt-1">
-                    {STATUS_ORDER.map(s => <option key={s} value={s}>{CANDIDATE_STATUS_LABELS[s]}</option>)}
-                  </select>
-                </label>
-                {assignError && <p className="text-xs text-red-600">{assignError}</p>}
-                <div className="flex gap-2">
-                  <button onClick={saveAssign} disabled={assigning} className="btn-primary text-sm">
-                    {assigning ? <Loader2 size={14} className="animate-spin" /> : null}
-                    שמירת שיוך
-                  </button>
-                  <button onClick={() => setAssignOpen(false)} className="btn-secondary text-sm">ביטול</button>
-                </div>
-              </div>
-            )}
 
             <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0" style={{ background: '#efeae2' }}>
               {selected.candidate && (selected.candidate.city || selected.candidate.positionType) && (
@@ -722,6 +606,16 @@ function WaInboxScreen({
           </>
         )}
       </section>
+      {assignDraft && (
+        <CandidateFormModal
+          key={assignDraft.id}
+          initial={assignDraft}
+          editing={assignEditing}
+          positions={shownPositions}
+          onClose={() => setAssignDraft(null)}
+          onSubmit={saveAssign}
+        />
+      )}
     </div>
   )
 }
