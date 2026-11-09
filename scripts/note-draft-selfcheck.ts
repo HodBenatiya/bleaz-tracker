@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { zipSync } from 'fflate'
 import { deflateRawSync } from 'node:zlib'
-import { readImageCv } from '../api/cvVision'
+import { readImageCv } from '../api/_cvVision'
 import { extractCvText, extractDocxText, extractPdfText, inspectCv, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText'
 import { draftFromText, extractNoteFacts, IMAGE_CV_STATUS, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft'
 import { looksLikeCv } from '../src/utils/wa'
