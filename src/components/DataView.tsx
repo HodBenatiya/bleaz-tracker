@@ -1,9 +1,10 @@
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { Search, Phone, X, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ClipboardPaste, ChevronsUpDown, ChevronUp, ChevronDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import * as pdfjsLib from 'pdfjs-dist'
 import type { Candidate, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
+import { loadCampaignNames } from '../utils/metaAdsStore'
 
 // PDF worker — resolve local file via Vite's asset URL handling
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -114,10 +115,17 @@ export default function DataView({ candidates, positions, onChange }: Props) {
   const [importRows, setImportRows] = useState<Record<string, string>[]>([])
   const [showImport, setShowImport] = useState(false)
   const [importSrc,  setImportSrc]  = useState('')
+  const [campaignNames, setCampaignNames] = useState<string[]>([])
   const [pasteText,  setPasteText]  = useState('')
   const [tab,        setTab]        = useState<'file' | 'paste'>('file')
   const [pdfLoading, setPdfLoading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    loadCampaignNames().then(names => { if (!cancelled) setCampaignNames(names) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   type SortKey = 'name' | 'age' | 'city' | 'status' | 'company' | 'positionType' | 'source' | 'createdAt'
   const [sortBy,  setSortBy]  = useState<SortKey | null>(null)
@@ -478,11 +486,15 @@ export default function DataView({ candidates, positions, onChange }: Props) {
             <div className="px-6 py-3 border-b border-slate-100 shrink-0 flex items-center gap-3">
               <label className="text-sm font-medium text-slate-700 whitespace-nowrap">מקור / קמפיין:</label>
               <input
+                list="import-campaign-names"
                 value={importSrc}
                 onChange={e => setImportSrc(e.target.value)}
-                placeholder="Meta ינואר 2025, רשימת לידים ישנה..."
+                placeholder="שם הקמפיין, או מקור כללי"
                 className="input flex-1 text-sm"
               />
+              <datalist id="import-campaign-names">
+                {campaignNames.map(name => <option key={name} value={name} />)}
+              </datalist>
             </div>
 
             {/* preview rows */}

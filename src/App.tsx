@@ -97,7 +97,7 @@ export default function App() {
     return () => { cancelled = true }
   }, [signedIn])
 
-  // ── Real-time subscriptions (sync between Hod and Tzachi) ──
+  // ── Real-time subscriptions for every signed-in CRM user ──
   useEffect(() => {
     if (!signedIn) return
     const channel = supabase.channel('bleaz-realtime')
@@ -247,6 +247,14 @@ export default function App() {
 
   const waUnread = (candidates ?? []).reduce((sum, c) => sum + (c?.waUnread ?? 0), 0)
     + (waInbox ?? []).reduce((sum, lead) => sum + (!lead || lead.candidateId ? 0 : (lead.unread ?? 0)), 0)
+
+  if (new URLSearchParams(window.location.search).get('adsExample') === '1') {
+    return (
+      <Layout view="marketing" onNav={() => {}} onNewDay={() => {}} tasks={[]}>
+        <MarketingROI reports={[]} candidates={[]} positions={[]} exampleOnly />
+      </Layout>
+    )
+  }
 
   if (!authReady) {
     return (

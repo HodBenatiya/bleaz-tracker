@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react'
 import type { DailyReport, Candidate, SavedPosition } from '../types'
-import { todayISO, toISODate } from '../utils/helpers'
+import { toISODate } from '../utils/helpers'
 import { candidateAnchor, classifyPlacementForSpendRange } from '../utils/candidateAnchor'
+import { todayInIsrael } from '../utils/metaAds/zone'
+import { examplePositions } from '../utils/metaAds/example'
+import AdsAnalytics from './AdsAnalytics'
 
 interface Props {
   reports:    DailyReport[]
   candidates: Candidate[]
   positions:  SavedPosition[]
+  exampleOnly?: boolean
 }
 
 const PLACEMENT_VALUE = 5000 // ₪ per placement
@@ -97,8 +101,10 @@ function buildCampaignRows(reports: DailyReport[]): CampaignRow[] {
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function MarketingROI({ reports, candidates }: Props) {
-  const today = todayISO()
+export default function MarketingROI({ reports, candidates, positions, exampleOnly = false }: Props) {
+  const today = todayInIsrael()
+  const [example, setExample] = useState(exampleOnly)
+  const [jobIds, setJobIds] = useState<string[]>([])
   const [preset, setPreset] = useState<RangePreset>('today')
   const [pastMonth, setPastMonth] = useState('')
   const [customStart, setCustomStart] = useState(shiftDays(today, -6))
@@ -174,14 +180,19 @@ export default function MarketingROI({ reports, candidates }: Props) {
     { id: 'month', label: 'החודש' },
   ]
 
+  const filterPositions = example ? examplePositions() : positions
+  function toggleJob(id: string) {
+    setJobIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
+  }
+
   return (
     <div className="space-y-6">
       <div className="card">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-xs text-slate-500">{preset === 'today' ? 'הוצאה חיה' : 'הוצאה בטווח'}</p>
-            <p className="text-3xl font-black text-slate-800">₪{totalSpend.toLocaleString('he-IL')}</p>
-            <p className="text-sm text-slate-500 mt-1">{range.label} · {range.start === range.end ? range.start : `${range.start} – ${range.end}`}</p>
+            <p className="text-xs text-slate-500">טווח</p>
+            <p className="text-lg font-black text-slate-800">{range.label}</p>
+            <p className="text-sm text-slate-500 mt-1">{range.start === range.end ? range.start : `${range.start} – ${range.end}`}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {presets.map(item => (
@@ -213,23 +224,64 @@ export default function MarketingROI({ reports, candidates }: Props) {
               עד
               <input type="date" value={customEnd} onChange={event => { setCustomEnd(event.target.value); setPreset('custom') }} className="text-xs border border-slate-200 rounded-lg px-2 py-1" />
             </label>
+            {!exampleOnly && (
+              <button
+                type="button"
+                onClick={() => { setExample(value => !value); setJobIds([]) }}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold ${example ? 'bg-amber-200 text-amber-950' : 'bg-slate-100 text-slate-600'}`}
+              >
+                {example ? 'חזרה לנתונים' : 'הצג דוגמה'}
+              </button>
+            )}
           </div>
         </div>
-        {fallbackCount > 0 && (
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button
+            type="button"
+            onClick={() => setJobIds([])}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold ${jobIds.length === 0 ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
+          >
+            כל המשרות
+          </button>
+          {filterPositions.map(position => (
+            <button
+              key={position.id}
+              type="button"
+              onClick={() => toggleJob(position.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold ${jobIds.includes(position.id) ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
+            >
+              {position.positionTitle} · {position.companyName}{position.isActive ? '' : ' · לא פעילה'}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-slate-400 mt-2">אפשר לבחור משרה אחת או כמה. בלי בחירה רואים את הכל.</p>
+        {!example && fallbackCount > 0 && (
           <p className="text-[11px] text-amber-700 mt-3">{fallbackCount} מועמדים בלי תאריך יצירה נספרו לפי התאריך המוקדם ביותר שיש להם.</p>
         )}
-        {withheldPlacements > 0 && (
+        {!example && withheldPlacements > 0 && (
           <p className="text-[11px] text-amber-800 mt-3 leading-relaxed">
             {withheldPlacements} השמות שויכו ידנית לחודש בלבד, בלי יום מדויק. הן לא נכנסות ל-ROI ולעלות להשמה בטווח הזה, כדי לא להשוות הוצאה יומית או חלקית לכל ההשמות של החודש. בחרו את החודש המלא כדי לכלול אותן.
           </p>
         )}
-        {monthPlacements > 0 && (
+        {!example && monthPlacements > 0 && (
           <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
             נכללו {monthPlacements} השמות עם שיוך ידני, כי החודש שלהן נמצא במלואו בטווח.
           </p>
         )}
       </div>
 
+      <AdsAnalytics
+        candidates={candidates}
+        positions={positions}
+        start={range.start}
+        end={range.end}
+        rangeLabel={range.label}
+        jobIds={jobIds}
+        example={example}
+      />
+
+      {!example && <>
+      <h3 className="text-sm font-bold text-slate-500">דיווח יומי ומקורות הגעה</h3>
       {/* ── KPI cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <KPI label="הוצאה"  value={`₪${totalSpend.toLocaleString('he-IL')}`}                          sub={range.label}        color="text-slate-700" />
@@ -373,8 +425,8 @@ export default function MarketingROI({ reports, candidates }: Props) {
       {campaignRows.length > 0 && (
         <div className="card p-0 overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-200">
-            <h3 className="text-base font-bold text-slate-800">הוצאות לפי קמפיין</h3>
-            <p className="text-xs text-slate-500 mt-0.5">מתוך דיווחים יומיים · לקישור עם המשפך — תייג מועמדים באותו שם מקור</p>
+            <h3 className="text-base font-bold text-slate-800">הוצאות לפי דיווח יומי</h3>
+            <p className="text-xs text-slate-500 mt-0.5">מה שהוזן ידנית או בייבוא לדיווח. עלות המודעות האוטומטית מופיעה למעלה.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -415,6 +467,7 @@ export default function MarketingROI({ reports, candidates }: Props) {
           <p className="text-sm">הוסף מועמדים עם שדה "מקור" כדי לראות את משפך ההמרה לפי ערוץ</p>
         </div>
       )}
+      </>}
     </div>
   )
 }

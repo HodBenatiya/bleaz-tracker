@@ -1,0 +1,239 @@
+import assert from 'node:assert/strict'
+import { attributeLead } from '../src/utils/metaAds/attributeLead'
+import { exampleBundle } from '../src/utils/metaAds/example'
+import { suggestCampaignPositions } from '../src/utils/metaAds/matchCampaign'
+import { campaignsFromMaps, computeAdsMetrics, metricLeads } from '../src/utils/metaAds/metrics'
+import { formatMoney } from '../src/utils/metaAds/money'
+import { isDropoutStatus, isInterviewStatus, isRelevantStatus } from '../src/utils/metaAds/stages'
+import {
+  accountDatesForSpans,
+  assertMetaRead,
+  bucketToIsraelDays,
+  mergeAccountConfigs,
+  normalizeAccountId,
+  parseInsightRow,
+  pickResult,
+  planFetchSpans,
+  safeEqual,
+  stripSecrets,
+} from '../src/utils/metaAds/syncCore'
+import { israelDateForAccountHour, parseHourLabel } from '../src/utils/metaAds/zone'
+
+assert.equal(isRelevantStatus('relevant'), true)
+assert.equal(isRelevantStatus('future_relevant'), false)
+assert.equal(isRelevantStatus('called'), false)
+assert.equal(isInterviewStatus('called'), false)
+assert.equal(isInterviewStatus('interview_scheduled'), true)
+assert.equal(isInterviewStatus('placement_complete'), true)
+assert.equal(isDropoutStatus('irrelevant'), true)
+assert.equal(isDropoutStatus('screening'), false)
+
+assert.equal(parseHourLabel('14:00:00 - 14:59:59'), 14)
+assert.equal(parseHourLabel('0'), 0)
+assert.equal(parseHourLabel(''), null)
+assert.equal(israelDateForAccountHour('2026-11-10', 13, 'America/Los_Angeles'), '2026-11-10')
+assert.equal(israelDateForAccountHour('2026-11-10', 14, 'America/Los_Angeles'), '2026-11-11')
+assert.equal(israelDateForAccountHour('2026-11-10', 10, 'Asia/Jerusalem'), '2026-11-10')
+
+const bucket = bucketToIsraelDays([
+  { campaignId: '1', campaignName: 'א', currency: 'USD', accountDate: '2026-11-10', hour: 13, spend: 10, impressions: 1, clicks: 1, results: 2, resultAction: 'lead' },
+  { campaignId: '1', campaignName: 'א', currency: 'USD', accountDate: '2026-11-10', hour: 14, spend: 5, impressions: 1, clicks: 0, results: 1, resultAction: 'lead' },
+], 'America/Los_Angeles')
+assert.equal(bucket.length, 2)
+assert.equal(bucket.find(row => row.date === '2026-11-10')?.spend, 10)
+assert.equal(bucket.find(row => row.date === '2026-11-11')?.spend, 5)
+
+const parsed = parseInsightRow({
+  campaign_id: '9',
+  campaign_name: 'בדיקה',
+  spend: '1.5',
+  date_start: '2026-11-10',
+  account_currency: 'USD',
+  hourly_stats_aggregated_by_advertiser_time_zone: '08:00:00 - 08:59:59',
+  actions: [
+    { action_type: 'lead', value: '4' },
+    { action_type: 'onsite_conversion.messaging_conversation_started_7d', value: '2' },
+  ],
+}, 'ILS')
+assert.equal(parsed?.results, 2)
+assert.equal(parsed?.resultAction, 'onsite_conversion.messaging_conversation_started_7d')
+assert.equal(parsed?.currency, 'USD')
+assert.deepEqual(pickResult([{ action_type: 'lead', value: '3' }]), { action: 'lead', value: 3 })
+
+const firstPlan = planFetchSpans('2026-11-10', 3, null)
+assert.deepEqual(firstPlan.spans[0], { start: '2026-11-08', end: '2026-11-10' })
+assert.equal(firstPlan.nextOldest, '2026-11-01')
+const dates = accountDatesForSpans([{ start: '2026-11-10', end: '2026-11-10' }])
+assert.deepEqual(dates, ['2026-11-09', '2026-11-10', '2026-11-11'])
+
+assert.throws(() => assertMetaRead('https://graph.facebook.com/v19.0/act_1/insights', 'POST'), /read-only/)
+assert.throws(() => assertMetaRead('https://graph.facebook.com/v19.0/act_1/campaigns', 'POST'), /read-only/)
+assert.throws(() => assertMetaRead('https://example.com/v19.0/act_1/insights', 'GET'), /not allowed/)
+assert.doesNotThrow(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/insights?access_token=secret', 'GET'))
+assert.doesNotThrow(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/campaigns?limit=10', 'GET'))
+assert.equal(stripSecrets('fail access_token=EAA123abc'), 'fail access_token=redacted')
+assert.equal(safeEqual('abc', 'abc'), true)
+assert.equal(safeEqual('abc', 'abd'), false)
+assert.equal(normalizeAccountId('act_42'), 'act_42')
+assert.throws(() => normalizeAccountId('nope'))
+
+const merged = mergeAccountConfigs(
+  [{ accountId: 'act_1', name: 'טבלה', currency: 'ILS', timezone: 'Asia/Jerusalem', tokenEnv: 'META_TOKEN_BLEAZ', enabled: true }],
+  [{ accountId: 'act_1', name: 'סביבה', currency: 'USD', timezone: 'UTC', tokenEnv: 'META_TOKEN_BLEAZ', enabled: true },
+    { accountId: 'act_2', name: 'נוסף', currency: 'USD', timezone: 'UTC', tokenEnv: 'META_TOKEN_NONA', enabled: true }],
+)
+assert.equal(merged.find(row => row.accountId === 'act_1')?.currency, 'ILS')
+assert.equal(merged.find(row => row.accountId === 'act_2')?.name, 'נוסף')
+
+const positions = [
+  { id: 'bdo', companyName: 'BDO', positionTitle: 'מנהלת חשבונות' },
+  { id: 'alt', companyName: 'אלטשולר', positionTitle: 'עוזר חשב' },
+  { id: 'alt-2', companyName: 'אלטשולר', positionTitle: 'מנהלת גיוס' },
+  { id: 'meitav', companyName: 'מיטב', positionTitle: 'שירות לקוחות' },
+  { id: 'clal-service', companyName: 'כלל', positionTitle: 'שירות לקוחות' },
+  { id: 'clal-ops', companyName: 'כלל', positionTitle: 'רפרנט תפעול' },
+]
+function ids(name: string): string[] {
+  return suggestCampaignPositions(name, positions).map(item => item.positionId).sort()
+}
+assert.deepEqual(ids('עוזר חשב אלטושלר'), ['alt'])
+assert.deepEqual(ids('מנהלת חשבונות BDO משרה מלאה מהבית'), ['bdo'])
+assert.deepEqual(ids('שירות לקוחות מיטב- כינרת'), ['meitav'])
+assert.deepEqual(ids('רפרנט תפעול כלל רמת החייל'), ['clal-ops'])
+assert.deepEqual(ids('שירות לקוחות כלל פתח תקווה טירגוט כללי'), ['clal-service'])
+assert.deepEqual(ids('קמפיין כללי'), [])
+assert.deepEqual(ids('אלטשולר').sort(), ['alt', 'alt-2'])
+assert.equal(suggestCampaignPositions('אלטשולר', positions)[0].reason.includes('בלי שם משרה'), true)
+
+const campaigns = [
+  { accountId: 'act_1', campaignId: '111', campaignName: 'מנהלת חשבונות BDO משרה מלאה מהבית', positionIds: ['bdo'] },
+  { accountId: 'act_1', campaignId: '222', campaignName: 'שירות לקוחות מיטב- כינרת', positionIds: [] },
+  { accountId: 'act_1', campaignId: '333', campaignName: 'כפול', positionIds: ['bdo'] },
+  { accountId: 'act_1', campaignId: '444', campaignName: 'כפול', positionIds: ['meitav'] },
+]
+assert.equal(attributeLead({ source: 'WhatsApp' }, campaigns).kind, 'unattributed')
+assert.deepEqual(attributeLead({ source: 'WhatsApp', savedPositionId: 'bdo' }, campaigns), {
+  kind: 'attributed', positionIds: ['bdo'], via: 'assignment', campaignId: undefined,
+})
+assert.equal(attributeLead({ source: 'מנהלת חשבונות BDO משרה מלאה מהבית' }, campaigns).kind, 'attributed')
+const viaSource = attributeLead({ source: 'מנהלת חשבונות BDO משרה מלאה מהבית' }, campaigns)
+assert.equal(viaSource.kind === 'attributed' && viaSource.via, 'source')
+assert.equal(attributeLead({ source: 'שירות לקוחות מיטב- כינרת' }, campaigns).kind, 'unattributed')
+if (attributeLead({ source: 'שירות לקוחות מיטב- כינרת' }, campaigns).kind === 'unattributed') {
+  assert.equal(attributeLead({ source: 'שירות לקוחות מיטב- כינרת' }, campaigns).kind, 'unattributed')
+}
+const unmapped = attributeLead({ source: 'שירות לקוחות מיטב- כינרת' }, campaigns)
+assert.equal(unmapped.kind, 'unattributed')
+if (unmapped.kind === 'unattributed') assert.equal(unmapped.why, 'unmapped-campaign')
+const ambiguous = attributeLead({ source: 'כפול' }, campaigns)
+assert.equal(ambiguous.kind, 'unattributed')
+if (ambiguous.kind === 'unattributed') assert.equal(ambiguous.why, 'ambiguous')
+assert.deepEqual(
+  attributeLead({ source: 'Meta', savedPositionIds: ['bdo', 'meitav'] }, campaigns).kind === 'attributed'
+    ? (attributeLead({ source: 'Meta', savedPositionIds: ['bdo', 'meitav'] }, campaigns) as { positionIds: string[] }).positionIds
+    : [],
+  ['bdo', 'meitav'],
+)
+
+const today = '2026-11-10'
+const sample = exampleBundle(today)
+const known = campaignsFromMaps(sample.bundle.campaigns, sample.bundle.maps)
+const leads = metricLeads(sample.candidates, known, today, today)
+const report = computeAdsMetrics({
+  spend: sample.bundle.spend,
+  maps: sample.bundle.maps,
+  leads,
+  jobIds: 'all',
+  usdToIls: 3.7,
+  start: today,
+  end: today,
+})
+assert.equal(report.selection.money.byCurrency[0].amount, 420)
+assert.equal(report.selection.counts.leads, 6)
+assert.equal(report.selection.counts.relevant, 3)
+assert.equal(report.selection.counts.interviews, 2)
+assert.equal(report.selection.counts.placements, 1)
+assert.equal(report.selection.counts.dropouts, 1)
+assert.equal(report.selection.costPerLead.amount, 70)
+assert.equal(report.selection.costPerLead.currency, 'USD')
+assert.equal(report.jobs.find(job => job.id === 'ex-bdo')?.money.byCurrency[0].amount, 300)
+assert.equal(report.jobs.find(job => job.id === 'ex-bdo')?.counts.leads, 2)
+assert.equal(report.jobs.find(job => job.id === 'ex-bdo')?.costPerLead.amount, 150)
+assert.equal(report.jobs.find(job => job.id === 'ex-meitav')?.counts.placements, 1)
+assert.equal(report.unattributed.counts.leads, 2)
+assert.equal(report.unattributed.money.byCurrency[0].amount, 40)
+assert.equal(formatMoney(420, 'USD'), '$420')
+
+const onlyBdo = computeAdsMetrics({
+  spend: sample.bundle.spend,
+  maps: sample.bundle.maps,
+  leads,
+  jobIds: ['ex-bdo'],
+  usdToIls: null,
+  start: today,
+  end: today,
+})
+assert.equal(onlyBdo.selection.money.byCurrency[0].amount, 300)
+assert.equal(onlyBdo.selection.counts.leads, 2)
+assert.equal(onlyBdo.unattributed.counts.leads, 2)
+
+const shared = computeAdsMetrics({
+  spend: [{ accountId: 'a', campaignId: 'c', date: today, spend: 100, currency: 'ILS' }],
+  maps: [
+    { accountId: 'a', campaignId: 'c', positionId: 'p1' },
+    { accountId: 'a', campaignId: 'c', positionId: 'p2' },
+  ],
+  leads: [
+    { id: 'l1', status: 'new', anchorDay: today, positionIds: ['p1', 'p2'], placementKind: 'out' },
+  ],
+  jobIds: 'all',
+  usdToIls: null,
+  start: today,
+  end: today,
+})
+assert.equal(shared.selection.counts.leads, 1)
+assert.equal(shared.selection.money.byCurrency[0].amount, 100)
+assert.equal(shared.jobs.find(job => job.id === 'p1')?.counts.leads, 1)
+assert.equal(shared.jobs.find(job => job.id === 'p2')?.counts.leads, 1)
+assert.equal(shared.jobs.find(job => job.id === 'p1')?.money.byCurrency[0].amount, 50)
+
+const withheld = computeAdsMetrics({
+  spend: [{ accountId: 'a', campaignId: 'c', date: '2026-10-16', spend: 90, currency: 'ILS' }],
+  maps: [{ accountId: 'a', campaignId: 'c', positionId: 'p1' }],
+  leads: metricLeads([{
+    id: 'placed',
+    status: 'placement_complete',
+    source: 'WhatsApp',
+    savedPositionId: 'p1',
+    createdAt: '2026-10-02T08:00:00.000Z',
+    attributionMonth: '2026-10',
+  }], [{ accountId: 'a', campaignId: 'c', campaignName: 'x', positionIds: ['p1'] }], '2026-10-15', '2026-10-20'),
+  jobIds: 'all',
+  usdToIls: null,
+  start: '2026-10-15',
+  end: '2026-10-20',
+})
+assert.equal(withheld.selection.counts.placements, 0)
+assert.equal(withheld.selection.counts.placementsWithheld, 1)
+assert.equal(withheld.selection.costPerPlacement.amount, null)
+
+const fullMonth = computeAdsMetrics({
+  spend: [{ accountId: 'a', campaignId: 'c', date: '2026-10-01', spend: 90, currency: 'ILS' }],
+  maps: [{ accountId: 'a', campaignId: 'c', positionId: 'p1' }],
+  leads: metricLeads([{
+    id: 'placed',
+    status: 'started_working',
+    source: 'WhatsApp',
+    savedPositionId: 'p1',
+    createdAt: '2026-10-02T08:00:00.000Z',
+    attributionMonth: '2026-10',
+  }], [{ accountId: 'a', campaignId: 'c', campaignName: 'x', positionIds: ['p1'] }], '2026-10-01', '2026-10-31'),
+  jobIds: 'all',
+  usdToIls: null,
+  start: '2026-10-01',
+  end: '2026-10-31',
+})
+assert.equal(fullMonth.selection.counts.placements, 1)
+assert.equal(fullMonth.selection.costPerPlacement.amount, 90)
+
+console.log('meta ads selfcheck ok')
