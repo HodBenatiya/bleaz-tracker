@@ -6,6 +6,7 @@ import CandidateFormModal from './CandidateFormModal'
 import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
 import { authFetch } from '../utils/authFetch'
+import { noteLeadKey } from '../utils/noteDraft'
 import { buildWaThreads, mergeWaMessages, personName, phoneKey, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
@@ -118,9 +119,12 @@ function WaInboxScreen({
   const [sendError, setSendError] = useState('')
   const [assignDraft, setAssignDraft] = useState<Candidate | null>(null)
   const [assignEditing, setAssignEditing] = useState(false)
-  const [noteSeed, setNoteSeed] = useState<{ text: string; token: number; force?: boolean } | null>(null)
+  const [noteSeed, setNoteSeed] = useState<{ text: string; token: number; leadKey: string; force?: boolean } | null>(null)
   const [noteDrafting, setNoteDrafting] = useState(false)
+  const [assignLeadKey, setAssignLeadKey] = useState<string | null>(null)
   const noteToken = useRef(0)
+  const noteLead = useRef('')
+  const noteAbort = useRef<AbortController | null>(null)
   const [attachment, setAttachment] = useState<{ file: File; url: string; kind: 'image' | 'video' | 'file' } | null>(null)
   const [recording, setRecording] = useState(false)
   const [recordMs, setRecordMs] = useState(0)
@@ -351,11 +355,17 @@ function WaInboxScreen({
   }
 
   const requestNoteDraft = async (thread: WaThread, force: boolean) => {
+    const leadKey = noteLeadKey(thread)
+    noteLead.current = leadKey
+    noteAbort.current?.abort()
+    const controller = new AbortController()
+    noteAbort.current = controller
     const token = ++noteToken.current
     setNoteDrafting(true)
     try {
       const res = await authFetch('/api/wa-note-draft', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chatId: thread.chatId,
@@ -371,16 +381,32 @@ function WaInboxScreen({
         }),
       })
       const data = await res.json().catch(() => ({}))
-      if (token !== noteToken.current || typeof data.draft !== 'string' || !data.draft.trim()) return
-      setNoteSeed({ text: data.draft, token, force })
-    } catch {
+      if (controller.signal.aborted || leadKey !== noteLead.current || token !== noteToken.current) return
+      if (typeof data.draft !== 'string' || !data.draft.trim()) return
+      setNoteSeed({ text: data.draft, token, force, leadKey })
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
       /* leave the note empty; the form still opens */
     } finally {
-      if (token === noteToken.current) setNoteDrafting(false)
+      if (token === noteToken.current && leadKey === noteLead.current) setNoteDrafting(false)
     }
   }
 
+  const closeAssign = () => {
+    noteAbort.current?.abort()
+    noteLead.current = ''
+    setNoteSeed(null)
+    setNoteDrafting(false)
+    setAssignLeadKey(null)
+    setAssignDraft(null)
+  }
+
   const openAssign = (thread: WaThread) => {
+    const leadKey = noteLeadKey(thread)
+    noteLead.current = leadKey
+    noteAbort.current?.abort()
+    setNoteSeed(null)
+    setAssignLeadKey(leadKey)
     const phone = toLocalPhone(thread.phone) || toLocalPhone(thread.candidate?.phone) || ''
     const key = phoneKey(phone)
     const pool = candidates.length ? candidates : shownCandidates
@@ -391,15 +417,22 @@ function WaInboxScreen({
       const noteText = history.length ? history[history.length - 1].text : (existing.notes ?? '')
       setAssignDraft({ ...existing, phone: toLocalPhone(existing.phone) || existing.phone, notes: noteText })
       setAssignEditing(true)
-      if (!noteText.trim()) void requestNoteDraft(thread, false)
+      if (!noteText.trim()) {
+        setNoteDrafting(true)
+        void requestNoteDraft(thread, false)
+      } else {
+        setNoteDrafting(false)
+      }
     } else {
       setAssignDraft({
         ...emptyCandidate(),
         name: personName(thread.title, phone),
         phone,
         source: 'WhatsApp',
+        notes: '',
       })
       setAssignEditing(false)
+      setNoteDrafting(true)
       void requestNoteDraft(thread, false)
     }
   }
@@ -644,16 +677,20 @@ function WaInboxScreen({
       </section>
       {assignDraft && (
         <CandidateFormModal
-          key={assignDraft.id}
+          key={assignLeadKey || assignDraft.id}
           initial={assignDraft}
           editing={assignEditing}
           positions={shownPositions}
-          onClose={() => setAssignDraft(null)}
+          onClose={closeAssign}
           onSubmit={saveAssign}
           noteSeed={noteSeed}
           noteDrafting={noteDrafting}
-          onRegenerateNote={() => { if (selected) void requestNoteDraft(selected, true) }}
-          leadMessages={selected?.messages}
+          leadKey={assignLeadKey || undefined}
+          onRegenerateNote={() => {
+            const thread = threads.find(item => noteLeadKey(item) === assignLeadKey)
+            if (thread) void requestNoteDraft(thread, true)
+          }}
+          leadMessages={threads.find(item => noteLeadKey(item) === assignLeadKey)?.messages}
         />
       )}
     </div>

@@ -127,6 +127,39 @@ export function looksLikeAutoDraft(notes: string): boolean {
   return notes.trimStart().startsWith(HEADER)
 }
 
+/** Trailing cue so the recruiter types their own update under the draft. */
+export const MY_UPDATE_CUE = 'עדכון שלי: '
+
+export function withMyUpdateCue(draft: string): string {
+  const trimmed = draft.replace(/\s+$/, '')
+  if (!trimmed) return ''
+  const label = MY_UPDATE_CUE.trim()
+  if (new RegExp(`(?:^|\\n)${label}\\s*$`).test(trimmed)) return trimmed.endsWith(' ') ? trimmed : `${trimmed} `
+  return `${trimmed}\n\n${MY_UPDATE_CUE}`
+}
+
+/** Stable id for one WhatsApp lead. Chat id wins; phone is the fallback. */
+export function noteLeadKey(input: { chatId?: string; phone?: string; key?: string }): string {
+  const chat = String(input.chatId || '').trim()
+  if (chat) return `chat:${chat}`
+  const phone = String(input.phone || '').replace(/\D/g, '')
+  if (phone) return `phone:${phone}`
+  const key = String(input.key || '').trim()
+  return key ? `key:${key}` : ''
+}
+
+/** A draft response may fill the note only for the lead currently in the modal, and only if the recruiter has not typed. */
+export function shouldApplyNoteDraft(input: {
+  responseKey: string
+  currentKey: string
+  userEdited: boolean
+  force: boolean
+}): boolean {
+  if (!input.currentKey || input.responseKey !== input.currentKey) return false
+  if (input.userEdited && !input.force) return false
+  return true
+}
+
 const PHONE = /(?:\+?972|0)5\d{8}/g
 const CHAT_BUDGET = 7_000
 const CV_BUDGET = 6_000

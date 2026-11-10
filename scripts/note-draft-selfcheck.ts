@@ -5,7 +5,7 @@ import fontkit from '@pdf-lib/fontkit'
 import { PDFDocument } from 'pdf-lib'
 import { readImageCv } from '../api/_cvVision'
 import { extractCvText, extractDocxText, extractPdfText, inspectCv, isUsableCvText, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText'
-import { buildNoteDraftPrompt, draftFromText, extractNoteFacts, IMAGE_CV_STATUS, noteDraftLlmMessages, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft'
+import { buildNoteDraftPrompt, draftFromText, extractNoteFacts, IMAGE_CV_STATUS, noteDraftLlmMessages, noteLeadKey, shouldApplyNoteDraft, UNSUPPORTED_CV_STATUS, withMyUpdateCue } from '../src/utils/noteDraft'
 import { looksLikeCv } from '../src/utils/wa'
 
 const chat = 'שלום, אני גר בתל אביב ומחפש משרה מלאה במוקד שירות. זמין מיידית. גיל 29. פונה לגבי נציג מכירות.'
@@ -290,5 +290,18 @@ const cvOnly = buildNoteDraftPrompt({ messages: [{ direction: 'in', text: '   ' 
 assert.equal(cvOnly.hasSource, true)
 assert.match(cvOnly.user, /אין טקסט שיחה/)
 assert.equal(buildNoteDraftPrompt({ messages: [], cvText: '' }).hasSource, false)
+
+const cued = withMyUpdateCue(draft)
+assert.ok(cued.startsWith('טיוטה אוטומטית – לבדוק'))
+assert.ok(cued.endsWith('\n\nעדכון שלי: '))
+assert.equal(withMyUpdateCue(cued), cued)
+assert.equal(withMyUpdateCue(''), '')
+assert.equal(noteLeadKey({ chatId: '972501111111@c.us', phone: '0502222222' }), 'chat:972501111111@c.us')
+assert.equal(noteLeadKey({ phone: '050-333-4444' }), 'phone:0503334444')
+assert.equal(shouldApplyNoteDraft({ responseKey: 'chat:a', currentKey: 'chat:b', userEdited: false, force: false }), false)
+assert.equal(shouldApplyNoteDraft({ responseKey: 'chat:a', currentKey: '', userEdited: false, force: true }), false)
+assert.equal(shouldApplyNoteDraft({ responseKey: 'chat:a', currentKey: 'chat:a', userEdited: true, force: false }), false)
+assert.equal(shouldApplyNoteDraft({ responseKey: 'chat:a', currentKey: 'chat:a', userEdited: true, force: true }), true)
+assert.equal(shouldApplyNoteDraft({ responseKey: 'chat:a', currentKey: 'chat:a', userEdited: false, force: false }), true)
 
 console.log('note draft selfcheck ok')
