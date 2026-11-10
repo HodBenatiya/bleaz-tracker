@@ -1,5 +1,4 @@
 import { unzipSync } from 'fflate'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { inflateRawSync } from 'node:zlib'
 import { looksLikeCv } from './wa'
 
@@ -7,14 +6,46 @@ const MAX_TEXT = 20_000
 const MAX_PDF_PAGES = 12
 
 type PdfTextItem = { str?: string; dir?: string; transform?: number[] }
+type PdfjsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
 let workerReady: Promise<void> | null = null
+let pdfjsModule: Promise<PdfjsModule> | null = null
+
+/**
+ * pdfjs runs `new DOMMatrix()` while the module evaluates. Vercel's esbuild
+ * bundle cannot load @napi-rs/canvas, so the import throws and the whole
+ * route dies. Text extraction does not render; empty classes are enough.
+ * Installed only when missing, and only on the PDF path.
+ */
+function installPdfDomPolyfills(): void {
+  const g = globalThis as unknown as Record<string, unknown>
+  if (typeof g.DOMMatrix !== 'function') g.DOMMatrix = class DOMMatrix {}
+  if (typeof g.ImageData !== 'function') g.ImageData = class ImageData {}
+  if (typeof g.Path2D !== 'function') g.Path2D = class Path2D {}
+}
+
+function loadPdfjs(): Promise<PdfjsModule> {
+  installPdfDomPolyfills()
+  if (!pdfjsModule) {
+    const pending = import('pdfjs-dist/legacy/build/pdf.mjs')
+    pdfjsModule = pending
+    pending.catch(() => {
+      if (pdfjsModule === pending) pdfjsModule = null
+    })
+  }
+  return pdfjsModule
+}
 
 function ensurePdfWorker(): Promise<void> {
+  installPdfDomPolyfills()
   if (!workerReady) {
-    workerReady = import('pdfjs-dist/legacy/build/pdf.worker.mjs').then(mod => {
+    const pending = import('pdfjs-dist/legacy/build/pdf.worker.mjs').then(mod => {
       const target = globalThis as typeof globalThis & { pdfjsWorker?: { WorkerMessageHandler: unknown } }
       target.pdfjsWorker = { WorkerMessageHandler: mod.WorkerMessageHandler }
+    })
+    workerReady = pending
+    pending.catch(() => {
+      if (workerReady === pending) workerReady = null
     })
   }
   return workerReady
@@ -67,17 +98,20 @@ function linesFromPdfItems(items: PdfTextItem[]): string {
 
 export async function extractPdfText(bytes: Uint8Array): Promise<string> {
   if (!bytes?.byteLength) return ''
-  await ensurePdfWorker()
-  const task = getDocument({
-    data: new Uint8Array(bytes),
-    disableFontFace: true,
-    useSystemFonts: false,
-    useWorkerFetch: false,
-    isOffscreenCanvasSupported: false,
-    verbosity: 0,
-  })
+  let task: { destroy: () => Promise<unknown> } | null = null
   try {
-    const doc = await task.promise
+    await ensurePdfWorker()
+    const { getDocument } = await loadPdfjs()
+    const loading = getDocument({
+      data: new Uint8Array(bytes),
+      disableFontFace: true,
+      useSystemFonts: false,
+      useWorkerFetch: false,
+      isOffscreenCanvasSupported: false,
+      verbosity: 0,
+    })
+    task = loading
+    const doc = await loading.promise
     const parts: string[] = []
     const pages = Math.min(doc.numPages, MAX_PDF_PAGES)
     for (let i = 1; i <= pages; i++) {
@@ -91,7 +125,7 @@ export async function extractPdfText(bytes: Uint8Array): Promise<string> {
   } catch {
     return ''
   } finally {
-    await task.destroy().catch(() => undefined)
+    await task?.destroy().catch(() => undefined)
   }
 }
 
