@@ -7,6 +7,7 @@ import { inferCampaign, isGenericSource, type CampaignInference } from '../utils
 import { loadCampaignChoices, loadCampaignPositionMaps, type CampaignChoice } from '../utils/metaAdsStore'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition, WaMessage } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
+import { shouldApplyNoteDraft, withMyUpdateCue } from '../utils/noteDraft'
 import AttributionMonthField from './AttributionMonthField'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
@@ -24,6 +25,7 @@ const STATUS_ORDER: CandidateStatus[] = [
 interface NoteSeed {
   text: string
   token: number
+  leadKey: string
   force?: boolean
 }
 
@@ -35,11 +37,13 @@ interface Props {
   onSubmit: (candidate: Candidate) => void
   noteSeed?: NoteSeed | null
   noteDrafting?: boolean
+  /** Lead this modal was opened for. A draft for any other lead is ignored. */
+  leadKey?: string
   onRegenerateNote?: () => void
   leadMessages?: WaMessage[]
 }
 
-export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit, noteSeed, noteDrafting, onRegenerateNote, leadMessages }: Props) {
+export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit, noteSeed, noteDrafting, leadKey, onRegenerateNote, leadMessages }: Props) {
   const [form, setForm] = useState<Candidate>(initial)
   const [choices, setChoices] = useState<CampaignChoice[]>([])
   const [maps, setMaps] = useState<{ accountId: string; campaignId: string; positionId: string }[]>([])
@@ -88,10 +92,17 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
 
   useEffect(() => {
     if (!noteSeed?.text) return
-    if (!noteSeed.force && noteDirty) return
-    setForm(current => ({ ...current, notes: noteSeed.text }))
+    if (!shouldApplyNoteDraft({
+      responseKey: noteSeed.leadKey,
+      currentKey: leadKey || '',
+      userEdited: noteDirty,
+      force: !!noteSeed.force,
+    })) return
+    const notes = withMyUpdateCue(noteSeed.text)
+    if (!notes) return
+    setForm(current => ({ ...current, notes }))
     if (noteSeed.force) setNoteDirty(false)
-  }, [noteSeed?.token])
+  }, [noteSeed?.token, noteSeed?.leadKey, leadKey])
 
   const handleCvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -274,7 +285,7 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
               onChange={e => { setNoteDirty(true); setForm(f => ({ ...f, notes: e.target.value })) }}
               className="input w-full text-sm leading-relaxed min-h-[9.5rem] resize-y"
               rows={8}
-              placeholder="ניסיון, זמינות, מה עלה בשיחה..."
+              placeholder={noteDrafting && !form.notes.trim() ? 'מכין טיוטה…' : 'ניסיון, זמינות, מה עלה בשיחה...'}
             />
           </div>
 
