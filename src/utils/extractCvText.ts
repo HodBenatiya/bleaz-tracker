@@ -1,6 +1,6 @@
 import { unzipSync } from 'fflate'
 import { inflateRawSync } from 'node:zlib'
-import { looksLikeCv } from './wa'
+import { looksLikeCv } from './wa.js'
 
 const MAX_TEXT = 20_000
 const MAX_PDF_PAGES = 12
