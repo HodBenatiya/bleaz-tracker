@@ -1,4 +1,5 @@
 import type { WaDeliveryStatus, WaMessageType } from '../types'
+import { referralFromRecord } from './metaAds/adReferral.js'
 import { typeFromMime } from './wa.js'
 
 export interface ParsedMessage {
@@ -17,6 +18,7 @@ export interface ParsedMessage {
   phoneJid?: string
   unresolved?: boolean
   source?: 'waha' | 'greenapi'
+  adReferral?: { title?: string; body?: string; sourceId?: string; sourceUrl?: string }
 }
 
 export type WaInbound =
@@ -193,6 +195,7 @@ function parseWahaMessage(payload: Record<string, any>, directionHint?: 'in' | '
     lid: lidFromPayload(payload, chatId) || undefined,
     phoneJid: phoneJidFromPayload(payload) || undefined,
     source: 'waha',
+    adReferral: referralFromRecord(payload),
   }
 }
 
@@ -275,6 +278,7 @@ function parseGreenMessage(body: Record<string, any>): ParsedMessage | null {
     senderName: senderName || undefined,
     hasMedia: !!file,
     source: 'greenapi',
+    adReferral: referralFromRecord(body),
   }
 }
 

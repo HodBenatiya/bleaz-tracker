@@ -38,9 +38,9 @@ export function exampleBundle(today: string): { bundle: AdsBundle; candidates: C
   const yesterday = addDaysISO(today, -1)
   const account = 'act_1001470104897244'
   const campaigns: AdsCampaignRow[] = [
-    { accountId: account, campaignId: '111', campaignName: 'מנהלת חשבונות BDO משרה מלאה מהבית', currency: 'USD', status: 'ACTIVE' },
-    { accountId: account, campaignId: '222', campaignName: 'שירות לקוחות מיטב- כינרת', currency: 'USD', status: 'ACTIVE' },
-    { accountId: account, campaignId: '333', campaignName: 'קמפיין בלי משרה', currency: 'USD', status: 'ACTIVE' },
+    { accountId: account, campaignId: '111', campaignName: 'מנהלת חשבונות BDO משרה מלאה מהבית', currency: 'USD', status: 'ACTIVE', delivering: true, activeAds: 2, activeAdsets: 1 },
+    { accountId: account, campaignId: '222', campaignName: 'שירות לקוחות מיטב- כינרת', currency: 'USD', status: 'ACTIVE', delivering: true, activeAds: 1, activeAdsets: 1 },
+    { accountId: account, campaignId: '333', campaignName: 'קמפיין בלי משרה', currency: 'USD', status: 'PAUSED', delivering: false, activeAds: 0, activeAdsets: 0 },
   ]
   const accounts: AdsAccountRow[] = [{
     accountId: account,
@@ -58,8 +58,12 @@ export function exampleBundle(today: string): { bundle: AdsBundle; candidates: C
     ],
     usdToIls: 3.7,
     lastSync: { finishedAt: `${today}T10:05:00.000Z`, ok: true, message: EXAMPLE_NOTE },
+    todaySpend: [
+      { accountId: account, campaignId: '111', date: today, spend: 300, currency: 'USD', results: 8 },
+      { accountId: account, campaignId: '222', date: today, spend: 80, currency: 'USD' },
+    ],
     spend: [
-      { accountId: account, campaignId: '111', date: today, spend: 300, currency: 'USD' },
+      { accountId: account, campaignId: '111', date: today, spend: 300, currency: 'USD', results: 8 },
       { accountId: account, campaignId: '111', date: yesterday, spend: 150, currency: 'USD' },
       { accountId: account, campaignId: '222', date: today, spend: 80, currency: 'USD' },
       { accountId: account, campaignId: '333', date: today, spend: 40, currency: 'USD' },
@@ -67,7 +71,7 @@ export function exampleBundle(today: string): { bundle: AdsBundle; candidates: C
   }
   const candidates: Candidate[] = [
     person({ id: 'ex-1', status: 'new', source: 'WhatsApp', savedPositionId: 'ex-bdo', createdAt: `${today}T06:00:00.000Z` }),
-    person({ id: 'ex-2', status: 'relevant', source: 'מנהלת חשבונות BDO משרה מלאה מהבית', createdAt: `${today}T07:00:00.000Z` }),
+    person({ id: 'ex-2', status: 'relevant', source: 'מנהלת חשבונות BDO משרה מלאה מהבית', metaAccountId: account, metaCampaignId: '111', createdAt: `${today}T07:00:00.000Z` }),
     person({ id: 'ex-3', status: 'interview_scheduled', source: 'WhatsApp', savedPositionId: 'ex-meitav', createdAt: `${today}T08:00:00.000Z` }),
     person({ id: 'ex-4', status: 'placement_complete', source: 'WhatsApp', savedPositionId: 'ex-meitav', createdAt: `${today}T09:00:00.000Z` }),
     person({ id: 'ex-5', status: 'irrelevant', source: 'WhatsApp', createdAt: `${today}T09:30:00.000Z` }),

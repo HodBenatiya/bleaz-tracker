@@ -72,6 +72,9 @@ create table if not exists public.meta_campaigns (
   campaign_name text not null,
   currency text not null default '',
   effective_status text not null default '',
+  delivering boolean,
+  active_ads integer,
+  active_adsets integer,
   updated_at timestamptz not null default now(),
   primary key (account_id, campaign_id)
 );

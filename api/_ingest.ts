@@ -52,6 +52,7 @@ function toWaMessage(parsed: ParsedMessage, file?: { fileUrl?: string; filePath?
     senderName: parsed.senderName,
     status: parsed.direction === 'out' ? 'sent' : undefined,
     source: parsed.source || (providerName() === 'waha' ? 'waha' : 'greenapi'),
+    adReferral: parsed.adReferral,
   }
 }
 

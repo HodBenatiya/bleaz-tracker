@@ -203,7 +203,11 @@ export interface Candidate {
   city?: string             // עיר מגורים
   status: CandidateStatus
   positionType: string      // סוג המשרה
-  source: string            // שם הקמפיין / מקור
+  source: string            // שם הקמפיין / מקור, נשמר גם כטקסט קריא
+  /** Meta ad account, act_… . Set only when מקור הגעה is a real campaign. */
+  metaAccountId?: string
+  /** Meta campaign id. Set only when מקור הגעה is a real campaign. */
+  metaCampaignId?: string
   savedPositionId?: string  // שיוך ראשי (compat)
   savedPositionIds?: string[] // שיוך למשרות מרובות
   nonaStatus: NonaStatus    // סטטוס הקמת משתמש נונה
@@ -252,6 +256,8 @@ export interface WaMessage {
   senderName?: string
   status?: WaDeliveryStatus
   source?: 'waha' | 'greenapi'
+  /** Click-to-WhatsApp ad marker, when the provider sent one. */
+  adReferral?: { title?: string; body?: string; sourceId?: string; sourceUrl?: string }
 }
 
 export interface StatusHistoryEntry {

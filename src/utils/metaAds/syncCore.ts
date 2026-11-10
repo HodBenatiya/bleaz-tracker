@@ -4,9 +4,9 @@ export const META_GRAPH_VERSION = 'v19.0'
 export const HISTORY_FLOOR_DAYS = 90
 
 const GRAPH_HOST = 'graph.facebook.com'
-const READ_PATH = /^\/v\d+\.\d+\/act_\d+\/(insights|campaigns)\/?$/
+const READ_PATH = /^\/v\d+\.\d+\/act_\d+\/(insights|campaigns|ads|adsets)\/?$/
 
-/** The sync may only read insights and the campaign list. */
+/** The sync may only read insights, campaigns, ad sets, and ads. */
 export function assertMetaRead(url: string, method: string): void {
   if (String(method || '').toUpperCase() !== 'GET') {
     throw new Error('Meta ads sync is read-only')

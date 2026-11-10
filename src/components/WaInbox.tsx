@@ -652,6 +652,7 @@ function WaInboxScreen({
           noteSeed={noteSeed}
           noteDrafting={noteDrafting}
           onRegenerateNote={() => { if (selected) void requestNoteDraft(selected, true) }}
+          leadMessages={selected?.messages}
         />
       )}
     </div>

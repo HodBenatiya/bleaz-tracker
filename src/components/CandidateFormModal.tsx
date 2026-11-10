@@ -3,8 +3,9 @@ import { FileText, Loader2, Search, Upload, X } from 'lucide-react'
 import { cvStorageKey } from '../utils/storageKey'
 import { signedStorageUrl } from '../utils/storageUrl'
 import { supabase } from '../utils/supabase'
-import { loadCampaignNames } from '../utils/metaAdsStore'
-import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
+import { inferCampaign, isGenericSource, type CampaignInference } from '../utils/metaAds/inferCampaign'
+import { loadCampaignChoices, loadCampaignPositionMaps, type CampaignChoice } from '../utils/metaAdsStore'
+import type { Candidate, CandidateStatus, NonaStatus, SavedPosition, WaMessage } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
 import AttributionMonthField from './AttributionMonthField'
 
@@ -19,8 +20,6 @@ const STATUS_ORDER: CandidateStatus[] = [
   'new', 'screening', 'call_scheduled', 'called', 'relevant', 'future_relevant',
   'sent_to_client', 'interview_scheduled', 'started_working', 'placement_complete', 'irrelevant',
 ]
-
-const SOURCES = ['WhatsApp', 'Meta', 'אורגני', 'שיתוף / המלצה']
 
 interface NoteSeed {
   text: string
@@ -37,21 +36,55 @@ interface Props {
   noteSeed?: NoteSeed | null
   noteDrafting?: boolean
   onRegenerateNote?: () => void
+  leadMessages?: WaMessage[]
 }
 
-export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit, noteSeed, noteDrafting, onRegenerateNote }: Props) {
+export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit, noteSeed, noteDrafting, onRegenerateNote, leadMessages }: Props) {
   const [form, setForm] = useState<Candidate>(initial)
-  const [campaignNames, setCampaignNames] = useState<string[]>([])
+  const [choices, setChoices] = useState<CampaignChoice[]>([])
+  const [maps, setMaps] = useState<{ accountId: string; campaignId: string; positionId: string }[]>([])
+  const [picking, setPicking] = useState(!!initial.metaCampaignId)
+  const [campaignQuery, setCampaignQuery] = useState('')
+  const [suggestion, setSuggestion] = useState<CampaignInference | null>(null)
+  const [autoPicked, setAutoPicked] = useState(false)
   const [positionSearch, setPositionSearch] = useState('')
   const [cvUploading, setCvUploading] = useState(false)
   const [noteDirty, setNoteDirty] = useState(false)
   const cvFileRef = useRef<HTMLInputElement>(null)
+  const sourceTouched = useRef(false)
+  const inferredOnce = useRef(false)
 
   useEffect(() => {
     let cancelled = false
-    loadCampaignNames().then(names => { if (!cancelled) setCampaignNames(names) }).catch(() => {})
+    Promise.all([loadCampaignChoices(), loadCampaignPositionMaps()]).then(([nextChoices, nextMaps]) => {
+      if (cancelled) return
+      setChoices(nextChoices)
+      setMaps(nextMaps)
+    }).catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (sourceTouched.current || inferredOnce.current || form.metaCampaignId || !choices.length) return
+    const referrals = [...(leadMessages ?? []), ...(form.waMessages ?? [])].flatMap(message => message.adReferral ? [message.adReferral] : [])
+    const positionIds = form.savedPositionIds ?? (form.savedPositionId ? [form.savedPositionId] : [])
+    const hit = inferCampaign({ campaigns: choices, maps, referrals, source: form.source, positionIds })
+    if (!hit) return
+    const sameName = hit.campaignName && form.source && form.source.trim() === hit.campaignName
+    if (!isGenericSource(form.source) && !sameName) {
+      setSuggestion(hit)
+      return
+    }
+    inferredOnce.current = true
+    setAutoPicked(true)
+    setPicking(true)
+    setForm(current => ({
+      ...current,
+      source: hit.campaignName,
+      metaAccountId: hit.accountId,
+      metaCampaignId: hit.campaignId,
+    }))
+  }, [choices, maps, leadMessages, form.metaCampaignId, form.source, form.savedPositionId, form.savedPositionIds, form.waMessages])
 
   useEffect(() => {
     if (!noteSeed?.text) return
@@ -139,20 +172,55 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
               <input value={form.city ?? ''} onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
                 className="input w-full text-sm" placeholder="תל אביב..." />
             </div>
-            <div>
+            <div className="col-span-4">
               {lbl('מקור הגעה')}
-              <input
-                list="lead-sources"
-                value={form.source}
-                onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
-                className="input w-full text-sm"
-                placeholder="שם הקמפיין, או WhatsApp"
+              <SourcePicker
+                form={form}
+                choices={choices}
+                picking={picking}
+                query={campaignQuery}
+                suggestion={suggestion}
+                autoPicked={autoPicked}
+                onQuery={setCampaignQuery}
+                onOrganic={() => {
+                  sourceTouched.current = true
+                  setAutoPicked(false)
+                  setSuggestion(null)
+                  setPicking(false)
+                  setForm(current => {
+                    const next = { ...current, source: 'אורגני' }
+                    delete next.metaAccountId
+                    delete next.metaCampaignId
+                    return next
+                  })
+                }}
+                onStartCampaign={() => setPicking(true)}
+                onPick={choice => {
+                  sourceTouched.current = true
+                  setAutoPicked(false)
+                  setSuggestion(null)
+                  setPicking(true)
+                  setForm(current => ({
+                    ...current,
+                    source: choice.campaignName,
+                    metaAccountId: choice.accountId,
+                    metaCampaignId: choice.campaignId,
+                  }))
+                }}
+                onApplySuggestion={() => {
+                  if (!suggestion) return
+                  sourceTouched.current = true
+                  setAutoPicked(false)
+                  setPicking(true)
+                  setForm(current => ({
+                    ...current,
+                    source: suggestion.campaignName,
+                    metaAccountId: suggestion.accountId,
+                    metaCampaignId: suggestion.campaignId,
+                  }))
+                  setSuggestion(null)
+                }}
               />
-              <datalist id="lead-sources">
-                {SOURCES.map(source => <option key={source} value={source} />)}
-                {campaignNames.map(source => <option key={source} value={source} />)}
-              </datalist>
-              <p className="text-[10px] text-slate-400 mt-1">שם קמפיין מדויק משייך את הליד. בלי שם ובלי משרה הוא נשאר לא משויך.</p>
             </div>
             <div>
               {lbl('סטטוס')}
@@ -414,6 +482,69 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function SourcePicker({ form, choices, picking, query, suggestion, autoPicked, onQuery, onOrganic, onStartCampaign, onPick, onApplySuggestion }: {
+  form: Candidate
+  choices: CampaignChoice[]
+  picking: boolean
+  query: string
+  suggestion: CampaignInference | null
+  autoPicked: boolean
+  onQuery: (value: string) => void
+  onOrganic: () => void
+  onStartCampaign: () => void
+  onPick: (choice: CampaignChoice) => void
+  onApplySuggestion: () => void
+}) {
+  const campaignMode = picking || !!form.metaCampaignId
+  const organic = form.source === 'אורגני' && !form.metaCampaignId && !picking
+  const selected = choices.find(choice => choice.accountId === form.metaAccountId && choice.campaignId === form.metaCampaignId)
+  const needle = query.trim().toLowerCase()
+  const visible = choices.filter(choice => {
+    const selected = choice.accountId === form.metaAccountId && choice.campaignId === form.metaCampaignId
+    if (selected) return !needle || `${choice.accountName} ${choice.campaignName}`.toLowerCase().includes(needle)
+    if (!needle) return choice.active
+    return `${choice.accountName} ${choice.campaignName}`.toLowerCase().includes(needle)
+  })
+  const legacy = form.source && form.source !== 'אורגני' && !form.metaCampaignId ? form.source : ''
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <button type="button" onClick={onOrganic} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${organic ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>אורגני</button>
+        <button type="button" onClick={onStartCampaign} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${campaignMode ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>קמפיין</button>
+      </div>
+      {legacy && <p className="text-[11px] text-slate-500">נשמר כמו שהיה: {legacy}</p>}
+      {autoPicked && form.metaCampaignId && <p className="text-[11px] text-slate-500">נבחר אוטומטית. אפשר לשנות.</p>}
+      {suggestion && !form.metaCampaignId && (
+        <button type="button" onClick={onApplySuggestion} className="text-[11px] font-semibold text-blue-700">
+          הצעה: {suggestion.campaignName}. לחצו כדי לשייך
+        </button>
+      )}
+      {campaignMode && (
+        <div className="rounded-xl border border-slate-200 p-2 space-y-2">
+          {(selected || form.metaCampaignId) && (
+            <p className="text-xs font-semibold text-slate-800">{selected ? `${selected.accountName} · ${selected.campaignName}` : form.source}</p>
+          )}
+          <input value={query} onChange={event => onQuery(event.target.value)} placeholder="חיפוש קמפיין, גם אם לא באוויר" className="input w-full text-sm" />
+          <ul className="max-h-40 overflow-y-auto">
+            {visible.map(choice => {
+              const on = choice.accountId === form.metaAccountId && choice.campaignId === form.metaCampaignId
+              return (
+                <li key={`${choice.accountId}:${choice.campaignId}`}>
+                  <button type="button" onClick={() => onPick(choice)} className={`w-full text-right rounded-lg px-2 py-1.5 text-sm ${on ? 'bg-slate-800 text-white' : 'hover:bg-slate-50 text-slate-700'}`}>
+                    <span className="block">{choice.accountName} · {choice.campaignName}</span>
+                    {!choice.active && <span className={`text-[10px] ${on ? 'text-slate-200' : 'text-slate-400'}`}>לא באוויר</span>}
+                  </button>
+                </li>
+              )
+            })}
+            {visible.length === 0 && <li className="px-2 py-2 text-[11px] text-slate-400">{!choices.length ? 'עדיין אין קמפיינים. הם יופיעו אחרי הסנכרון ממטא.' : needle ? 'אין קמפיין בשם הזה' : 'אין קמפיין באוויר. חפשו שם כדי למצוא קמפיין ישן.'}</li>}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

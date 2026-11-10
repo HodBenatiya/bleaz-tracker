@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { campaignIsLive } from './metaAds/live'
 import type { SpendSlice, MapRow } from './metaAds/metrics'
 import { todayInIsrael } from './metaAds/zone'
 
@@ -16,6 +17,18 @@ export interface AdsCampaignRow {
   campaignName: string
   currency: string
   status: string
+  delivering?: boolean | null
+  activeAds?: number | null
+  activeAdsets?: number | null
+}
+
+export interface CampaignChoice {
+  accountId: string
+  accountName: string
+  campaignId: string
+  campaignName: string
+  status: string
+  active: boolean
 }
 
 export interface AdsSyncLog {
@@ -31,6 +44,7 @@ export interface AdsBundle {
   accounts: AdsAccountRow[]
   usdToIls: number | null
   lastSync: AdsSyncLog | null
+  todaySpend: SpendSlice[]
 }
 
 type DbError = { code?: string; message?: string } | null
@@ -56,26 +70,20 @@ async function page<T>(load: (from: number, to: number) => PromiseLike<{ data: T
 
 export async function loadAdsBundle(start: string, end: string): Promise<AdsBundle> {
   const israelToday = todayInIsrael()
-  const includeToday = start <= israelToday && end >= israelToday
   try {
     const [daily, todayRows, campaignRows, mapRows, accountRows, settings, syncRows] = await Promise.all([
       page<Record<string, unknown>>((from, to) =>
         supabase.from('meta_campaign_daily')
-          .select('account_id,campaign_id,campaign_name,insight_date,spend,currency')
+          .select('account_id,campaign_id,campaign_name,insight_date,spend,currency,results')
           .gte('insight_date', start)
           .lte('insight_date', end)
           .range(from, to)),
-      includeToday
-        ? page<Record<string, unknown>>((from, to) =>
-          supabase.from('meta_campaign_today')
-            .select('account_id,campaign_id,campaign_name,snapshot_date,spend,currency')
-            .eq('snapshot_date', israelToday)
-            .range(from, to))
-        : Promise.resolve([]),
       page<Record<string, unknown>>((from, to) =>
-        supabase.from('meta_campaigns')
-          .select('account_id,campaign_id,campaign_name,currency,effective_status')
+        supabase.from('meta_campaign_today')
+          .select('account_id,campaign_id,campaign_name,snapshot_date,spend,currency,results')
+          .eq('snapshot_date', israelToday)
           .range(from, to)),
+      loadCampaignRows(),
       page<Record<string, unknown>>((from, to) =>
         supabase.from('meta_campaign_positions')
           .select('account_id,campaign_id,position_id')
@@ -94,21 +102,28 @@ export async function loadAdsBundle(start: string, end: string): Promise<AdsBund
 
     const spend: SpendSlice[] = []
     const seenCampaigns = new Map<string, AdsCampaignRow>()
-    const pushCampaign = (accountId: string, campaignId: string, name: string, currency: string, status = '') => {
+    const pushCampaign = (accountId: string, campaignId: string, name: string, currency: string, extra?: Partial<AdsCampaignRow>) => {
       const key = `${accountId}::${campaignId}`
       const prev = seenCampaigns.get(key)
-      if (!prev || (name && name !== campaignId)) {
-        seenCampaigns.set(key, {
-          accountId,
-          campaignId,
-          campaignName: name || prev?.campaignName || campaignId,
-          currency: currency || prev?.currency || '',
-          status: status || prev?.status || '',
-        })
-      }
+      seenCampaigns.set(key, {
+        accountId,
+        campaignId,
+        campaignName: name || prev?.campaignName || campaignId,
+        currency: currency || prev?.currency || '',
+        status: extra?.status || prev?.status || '',
+        delivering: extra?.delivering !== undefined ? extra.delivering : prev?.delivering,
+        activeAds: extra?.activeAds !== undefined ? extra.activeAds : prev?.activeAds,
+        activeAdsets: extra?.activeAdsets !== undefined ? extra.activeAdsets : prev?.activeAdsets,
+      })
     }
     for (const row of campaignRows) {
-      pushCampaign(String(row.account_id), String(row.campaign_id), String(row.campaign_name ?? ''), String(row.currency ?? ''), String(row.effective_status ?? ''))
+      const delivering = row.delivering
+      pushCampaign(String(row.account_id), String(row.campaign_id), String(row.campaign_name ?? ''), String(row.currency ?? ''), {
+        status: String(row.effective_status ?? ''),
+        delivering: typeof delivering === 'boolean' ? delivering : null,
+        activeAds: row.active_ads == null ? null : Number(row.active_ads),
+        activeAdsets: row.active_adsets == null ? null : Number(row.active_adsets),
+      })
     }
     const addSpend = (row: Record<string, unknown>, dateKey: string) => {
       const date = String(row[dateKey] ?? '').slice(0, 10)
@@ -125,11 +140,20 @@ export async function loadAdsBundle(start: string, end: string): Promise<AdsBund
         date,
         spend: Number(row.spend ?? 0) || 0,
         currency,
+        results: Number(row.results ?? 0) || 0,
       })
     }
     for (const row of daily) addSpend(row, 'insight_date')
     for (const row of todayRows) addSpend(row, 'snapshot_date')
 
+    const todaySpend: SpendSlice[] = todayRows.map(row => ({
+      accountId: String(row.account_id),
+      campaignId: String(row.campaign_id),
+      date: String(row.snapshot_date ?? israelToday).slice(0, 10),
+      spend: Number(row.spend ?? 0) || 0,
+      currency: String(row.currency ?? ''),
+      results: Number(row.results ?? 0) || 0,
+    }))
     const rate = settings.data?.usd_to_ils
     const last = syncRows.data?.[0]
     return {
@@ -153,12 +177,63 @@ export async function loadAdsBundle(start: string, end: string): Promise<AdsBund
         ok: !!last.ok,
         message: String(last.message ?? ''),
       } : null,
+      todaySpend,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'לא הצלחנו לטעון את נתוני המודעות'
     if (missingTable(error as DbError) || message === INSTALL_HINT) throw new Error(INSTALL_HINT)
     throw new Error(message)
   }
+}
+
+async function loadCampaignRows(): Promise<Record<string, unknown>[]> {
+  try {
+    return await page((from, to) =>
+      supabase.from('meta_campaigns')
+        .select('account_id,campaign_id,campaign_name,currency,effective_status,delivering,active_ads,active_adsets')
+        .range(from, to))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (!/delivering|active_ads|active_adsets|schema cache|column/i.test(message)) throw error
+    return await page((from, to) =>
+      supabase.from('meta_campaigns')
+        .select('account_id,campaign_id,campaign_name,currency,effective_status')
+        .range(from, to))
+  }
+}
+
+export async function loadCampaignPositionMaps(): Promise<{ accountId: string; campaignId: string; positionId: string }[]> {
+  const { data, error } = await supabase.from('meta_campaign_positions').select('account_id,campaign_id,position_id').limit(2000)
+  if (error || !data) return []
+  return data.map(row => ({
+    accountId: String(row.account_id),
+    campaignId: String(row.campaign_id),
+    positionId: String(row.position_id),
+  }))
+}
+
+export async function loadCampaignChoices(): Promise<CampaignChoice[]> {
+  const accounts = await supabase.from('meta_ad_accounts').select('account_id,name').limit(50)
+  let campaigns: Record<string, unknown>[]
+  try {
+    campaigns = await loadCampaignRows()
+  } catch {
+    return []
+  }
+  if (accounts.error) return []
+  const names = new Map((accounts.data ?? []).map(row => [String(row.account_id), String(row.name ?? '')]))
+  return campaigns.map(row => {
+    const status = String(row.effective_status ?? '')
+    const delivering = typeof row.delivering === 'boolean' ? row.delivering : null
+    return {
+      accountId: String(row.account_id),
+      accountName: names.get(String(row.account_id)) || String(row.account_id),
+      campaignId: String(row.campaign_id),
+      campaignName: String(row.campaign_name ?? ''),
+      status,
+      active: campaignIsLive(status, delivering),
+    }
+  }).sort((a, b) => Number(b.active) - Number(a.active) || a.campaignName.localeCompare(b.campaignName, 'he'))
 }
 
 export async function loadCampaignNames(): Promise<string[]> {

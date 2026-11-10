@@ -253,6 +253,7 @@ export function mergeWaMessages(a?: WaMessage[] | null, b?: WaMessage[] | null):
       fileName: next.fileName || prev.fileName,
       mimeType: next.mimeType || prev.mimeType,
       senderName: next.senderName || prev.senderName,
+      adReferral: next.adReferral || prev.adReferral,
       status: preferDeliveryStatus(prev.status, next.status),
     })
   }
