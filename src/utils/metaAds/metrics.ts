@@ -10,6 +10,7 @@ export interface SpendSlice {
   date: string
   spend: number
   currency: string
+  results?: number
 }
 
 export interface MapRow {

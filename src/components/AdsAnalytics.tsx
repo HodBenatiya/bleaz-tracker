@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Candidate, SavedPosition } from '../types'
 import { exampleBundle, EXAMPLE_NOTE, examplePositions } from '../utils/metaAds/example'
 import { suggestCampaignPositions } from '../utils/metaAds/matchCampaign'
-import { campaignsFromMaps, computeAdsMetrics, metricLeads, type ScopeMetrics } from '../utils/metaAds/metrics'
-import { formatCost, formatMoney, formatMoneyBag } from '../utils/metaAds/money'
+import { campaignFunnel, type CampaignFunnelRow } from '../utils/metaAds/campaignFunnel'
+import { campaignIsLive, updatedAgo, visibleCampaigns } from '../utils/metaAds/live'
+import { campaignsFromMaps, computeAdsMetrics, metricLeads, type ScopeMetrics, type SpendSlice } from '../utils/metaAds/metrics'
+import { costOf, formatCost, formatMoney, formatMoneyBag } from '../utils/metaAds/money'
 import { METRIC_COPY } from '../utils/metaAds/stages'
 import {
   loadAdsBundle,
@@ -64,7 +66,8 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
   const [rateText, setRateText] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const [mapOpen, setMapOpen] = useState(false)
+  const [mapOpen, setMapOpen] = useState(true)
+  const [mapQuery, setMapQuery] = useState('')
   const [addJob, setAddJob] = useState<Record<string, string>>({})
 
   const reload = useCallback(async () => {
@@ -106,6 +109,25 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
       selectionLabel: jobIds.length ? 'משרות נבחרות' : 'הכל',
     })
   }, [data, people, jobs, jobIds, start, end])
+
+  const funnel = useMemo(() => {
+    if (!data) return []
+    return campaignFunnel({
+      candidates: people,
+      campaigns: data.campaigns.map(row => ({
+        accountId: row.accountId,
+        campaignId: row.campaignId,
+        campaignName: row.campaignName,
+      })),
+      accounts: data.accounts.map(row => ({ accountId: row.accountId, name: row.name })),
+      spend: data.spend,
+      maps: data.maps,
+      jobIds: jobIds.length ? jobIds : 'all',
+      start,
+      end,
+      usdToIls: data.usdToIls,
+    })
+  }, [data, people, jobIds, start, end])
 
   async function saveRate() {
     if (example) return
@@ -266,22 +288,43 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
 
       <div className="card p-0 overflow-hidden">
         <button type="button" onClick={() => setMapOpen(open => !open)} className="w-full px-5 py-4 text-right">
-          <span className="text-base font-bold text-slate-800">שיוך קמפיינים למשרות</span>
-          <span className="block text-xs text-slate-500 mt-0.5">הצעה לפי השם, ואפשר לשייך או להסיר ידנית. בלי אישור ידני שום קמפיין לא מתחבר למשרה.</span>
+          <span className="text-base font-bold text-slate-800">קמפיינים באוויר</span>
+          <span className="block text-xs text-slate-500 mt-0.5">
+            רק מה שרץ עכשיו. חיפוש מוצא גם קמפיינים ישנים.
+            {data?.lastSync?.finishedAt ? ` ${updatedAgo(data.lastSync.finishedAt)}.` : ''}
+          </span>
         </button>
         {mapOpen && data && (
-          <div className="border-t border-slate-100 divide-y divide-slate-100">
-            {data.campaigns.length === 0 && <p className="px-5 py-4 text-sm text-slate-500">עדיין אין קמפיינים. הם יופיעו אחרי הסנכרון הראשון.</p>}
-            {data.campaigns.map(campaign => {
+          <div className="border-t border-slate-100">
+            <div className="px-5 py-3">
+              <input
+                value={mapQuery}
+                onChange={event => setMapQuery(event.target.value)}
+                placeholder="חיפוש קמפיין, גם אם לא באוויר"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="divide-y divide-slate-100">
+            {visibleCampaigns(data.campaigns, mapQuery).length === 0 && (
+              <p className="px-5 py-4 text-sm text-slate-500">{mapQuery.trim() ? 'אין קמפיין בשם הזה' : 'אין קמפיין באוויר עכשיו. חפשו כדי למצוא קמפיין ישן.'}</p>
+            )}
+            {visibleCampaigns(data.campaigns, mapQuery).map(campaign => {
+              const live = campaignIsLive(campaign.status, campaign.delivering)
+              const stats = funnel.find(row => row.accountId === campaign.accountId && row.campaignId === campaign.campaignId)
+              const todayMoney = spendBag(data.todaySpend ?? [], campaign.accountId, campaign.campaignId)
+              const accountName = data.accounts.find(account => account.accountId === campaign.accountId)?.name || ''
               const mapped = data.maps.filter(row => row.accountId === campaign.accountId && row.campaignId === campaign.campaignId)
               const suggestions = suggestCampaignPositions(campaign.campaignName, jobs)
                 .filter(item => !mapped.some(row => row.positionId === item.positionId))
               const key = `${campaign.accountId}:${campaign.campaignId}`
               return (
                 <div key={key} className="px-5 py-4 space-y-2">
-                  <div>
-                    <p className="font-semibold text-slate-800">{campaign.campaignName}</p>
-                    <p className="text-[11px] text-slate-400">{currencyLabel(campaign.currency)} · {campaign.accountId}</p>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-slate-800">{campaign.campaignName}</p>
+                      <p className="text-[11px] text-slate-400">{accountName}{live ? '' : ' · לא באוויר'}</p>
+                    </div>
+                    {live && <CampaignFigures stats={stats} todayText={formatMoneyBag(todayMoney)} rate={data.usdToIls} />}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {mapped.length === 0 && <span className="text-xs text-amber-700">לא משויך</span>}
@@ -341,9 +384,33 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
               )
             })}
             {example && <p className="px-5 py-3 text-xs text-amber-800">בדוגמה אי אפשר לשמור שיוך.</p>}
+            </div>
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function spendBag(rows: SpendSlice[], accountId: string, campaignId: string) {
+  const mine = rows.filter(row => row.accountId === accountId && row.campaignId === campaignId)
+  const byCurrency = new Map<string, number>()
+  for (const row of mine) byCurrency.set(row.currency, (byCurrency.get(row.currency) ?? 0) + row.spend)
+  return [...byCurrency.entries()].map(([currency, amount]) => ({ currency, amount }))
+}
+
+function CampaignFigures({ stats, todayText, rate }: { stats?: CampaignFunnelRow; todayText: string; rate: number | null }) {
+  const metaCost = stats ? formatCost(costOf(stats.money, stats.metaLeads), rate).primary : '—'
+  return (
+    <div className="text-[11px] text-slate-600 leading-relaxed text-left">
+      <div>היום {todayText} · בטווח {stats ? formatMoneyBag(stats.money.byCurrency) : '—'}</div>
+      <div>לידים במטא {stats?.metaLeads || 0} · עלות לליד {metaCost}</div>
+      {stats && stats.crmLeads > 0 && (
+        <>
+          <div>ב-CRM {stats.crmLeads} · רלוונטי {stats.relevant} · נשלח {stats.sent} · ראיון {stats.interviews} · השמה {stats.placements} · לא רלוונטי {stats.notRelevant}</div>
+          <div>עלות לרלוונטי {formatCost(stats.costPerRelevant, rate).primary} · לראיון {formatCost(stats.costPerInterview, rate).primary} · להשמה {formatCost(stats.costPerPlacement, rate).primary}</div>
+        </>
+      )}
     </div>
   )
 }

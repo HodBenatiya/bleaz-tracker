@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { referralFromRecord } from '../src/utils/metaAds/adReferral'
+import { campaignFunnel } from '../src/utils/metaAds/campaignFunnel'
+import { inferCampaign } from '../src/utils/metaAds/inferCampaign'
+import { campaignIsLive, updatedAgo, visibleCampaigns } from '../src/utils/metaAds/live'
 import { attributeLead } from '../src/utils/metaAds/attributeLead'
 import { exampleBundle } from '../src/utils/metaAds/example'
 import { suggestCampaignPositions } from '../src/utils/metaAds/matchCampaign'
@@ -71,6 +75,9 @@ assert.throws(() => assertMetaRead('https://graph.facebook.com/v19.0/act_1/campa
 assert.throws(() => assertMetaRead('https://example.com/v19.0/act_1/insights', 'GET'), /not allowed/)
 assert.doesNotThrow(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/insights?access_token=secret', 'GET'))
 assert.doesNotThrow(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/campaigns?limit=10', 'GET'))
+assert.doesNotThrow(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/ads?limit=10', 'GET'))
+assert.doesNotThrow(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/adsets?limit=10', 'GET'))
+assert.throws(() => assertMetaRead('https://graph.facebook.com/v19.0/act_100/ads', 'POST'), /read-only/)
 assert.equal(stripSecrets('fail access_token=EAA123abc'), 'fail access_token=redacted')
 assert.equal(safeEqual('abc', 'abc'), true)
 assert.equal(safeEqual('abc', 'abd'), false)
@@ -235,5 +242,82 @@ const fullMonth = computeAdsMetrics({
 })
 assert.equal(fullMonth.selection.counts.placements, 1)
 assert.equal(fullMonth.selection.costPerPlacement.amount, 90)
+
+assert.equal(campaignIsLive('ACTIVE', null), true)
+assert.equal(campaignIsLive('PAUSED', null), false)
+assert.equal(campaignIsLive('ACTIVE', false), false)
+assert.equal(campaignIsLive('PAUSED', true), true)
+assert.equal(campaignIsLive('', null), false)
+const listed = visibleCampaigns([
+  { campaignName: 'חי', status: 'ACTIVE', delivering: true },
+  { campaignName: 'ישן Promoting', status: 'PAUSED', delivering: false },
+], '')
+assert.deepEqual(listed.map(item => item.campaignName), ['חי'])
+assert.deepEqual(visibleCampaigns([
+  { campaignName: 'חי', status: 'ACTIVE', delivering: true },
+  { campaignName: 'ישן Promoting', status: 'PAUSED', delivering: false },
+], 'promoting').map(item => item.campaignName), ['ישן Promoting'])
+assert.equal(updatedAgo('2026-11-10T12:00:00.000Z', Date.parse('2026-11-10T12:12:00.000Z')), 'עודכן לפני 12 דק׳')
+
+const catalog = [
+  { accountId: 'act_1', campaignId: '111', campaignName: 'מנהלת חשבונות BDO משרה מלאה מהבית' },
+  { accountId: 'act_1', campaignId: '222', campaignName: 'שירות לקוחות מיטב' },
+]
+assert.equal(inferCampaign({
+  campaigns: catalog,
+  referrals: [{ sourceId: '111', title: 'מודעה' }],
+})?.reason, 'referral-id')
+assert.equal(inferCampaign({
+  campaigns: catalog,
+  referrals: [{ title: 'מנהלת חשבונות BDO משרה מלאה מהבית' }],
+})?.campaignId, '111')
+assert.equal(inferCampaign({
+  campaigns: catalog,
+  source: 'WhatsApp',
+  positionIds: ['job-bdo'],
+  maps: [{ accountId: 'act_1', campaignId: '111', positionId: 'job-bdo' }],
+})?.reason, 'job')
+assert.equal(inferCampaign({
+  campaigns: catalog,
+  source: 'WhatsApp',
+  positionIds: ['job-bdo'],
+  maps: [
+    { accountId: 'act_1', campaignId: '111', positionId: 'job-bdo' },
+    { accountId: 'act_1', campaignId: '222', positionId: 'job-bdo' },
+  ],
+}), null)
+
+const bdo = campaignFunnel({
+  campaigns: [{ accountId: 'act_1', campaignId: '111', campaignName: 'מנהלת חשבונות BDO' }],
+  accounts: [{ accountId: 'act_1', name: 'nona-jobs' }],
+  spend: [{ accountId: 'act_1', campaignId: '111', date: '2026-11-10', spend: 300, currency: 'USD', results: 8 }],
+  jobIds: 'all',
+  usdToIls: null,
+  start: '2026-11-10',
+  end: '2026-11-10',
+  candidates: [
+    { id: 'a', status: 'new', source: 'WhatsApp', metaAccountId: 'act_1', metaCampaignId: '111', createdAt: '2026-11-10T08:00:00.000Z' },
+    { id: 'b', status: 'sent_to_client', source: 'WhatsApp', metaAccountId: 'act_1', metaCampaignId: '111', createdAt: '2026-11-10T09:00:00.000Z' },
+    { id: 'c', status: 'irrelevant', source: 'WhatsApp', metaAccountId: 'act_1', metaCampaignId: '111', createdAt: '2026-11-10T10:00:00.000Z' },
+    { id: 'd', status: 'new', source: 'WhatsApp', createdAt: '2026-11-10T11:00:00.000Z' },
+  ],
+})
+assert.equal(bdo.length, 1)
+assert.equal(bdo[0].metaLeads, 8)
+assert.equal(bdo[0].crmLeads, 3)
+assert.equal(bdo[0].relevant, 1)
+assert.equal(bdo[0].sent, 1)
+assert.equal(bdo[0].notRelevant, 1)
+assert.equal(bdo[0].interviews, 0)
+assert.equal(bdo[0].placements, 0)
+assert.equal(bdo[0].costPerRelevant.amount, 300)
+assert.equal(bdo[0].accountName, 'nona-jobs')
+
+const referral = referralFromRecord({
+  _data: { message: { extendedTextMessage: { contextInfo: { externalAdReply: { title: 'מנהלת חשבונות BDO', sourceId: '111', sourceUrl: 'https://fb.me/x' } } } } },
+})
+assert.equal(referral?.sourceId, '111')
+assert.equal(referral?.title, 'מנהלת חשבונות BDO')
+assert.equal(referralFromRecord({ body: 'סתם הודעה' }), undefined)
 
 console.log('meta ads selfcheck ok')

@@ -86,6 +86,26 @@ function campaignsUrl(accountId: string, token: string): string {
   return `https://graph.facebook.com/${META_GRAPH_VERSION}/${accountId}/campaigns?${params}`
 }
 
+function deliveryUrl(kind: 'ads' | 'adsets', accountId: string, token: string): string {
+  const params = new URLSearchParams({
+    fields: 'campaign_id,effective_status',
+    filtering: JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE'] }]),
+    limit: '500',
+    access_token: token,
+  })
+  return `https://graph.facebook.com/${META_GRAPH_VERSION}/${accountId}/${kind}?${params}`
+}
+
+function countByCampaign(rows: Record<string, unknown>[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const row of rows) {
+    const id = String(row.campaign_id ?? '')
+    if (!id) continue
+    counts.set(id, (counts.get(id) ?? 0) + 1)
+  }
+  return counts
+}
+
 function readExtraAccounts(): AccountConfig[] {
   const extras: AccountConfig[] = []
   const raw = Deno.env.get('META_ACCOUNTS_JSON') ?? ''
@@ -137,6 +157,20 @@ async function upsertChunks(supabase: ReturnType<typeof createClient>, table: st
   for (let i = 0; i < rows.length; i += 200) {
     const { error } = await supabase.from(table).upsert(rows.slice(i, i + 200))
     if (error) throw new Error(error.message)
+  }
+}
+
+async function upsertCampaigns(supabase: ReturnType<typeof createClient>, rows: Record<string, unknown>[]) {
+  try {
+    await upsertChunks(supabase, 'meta_campaigns', rows)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (!/delivering|active_ads|active_adsets|schema cache|column/i.test(message)) throw error
+    const slim = rows.map(row => {
+      const { delivering: _delivering, active_ads: _ads, active_adsets: _sets, ...rest } = row
+      return rest
+    })
+    await upsertChunks(supabase, 'meta_campaigns', slim)
   }
 }
 
@@ -243,32 +277,41 @@ Deno.serve(async (req) => {
         }
 
         const catalogPage = await paged(campaignsUrl(account.accountId, token))
+        let deliveryKnown = true
+        let activeAds = new Map<string, number>()
+        let activeAdsets = new Map<string, number>()
+        try {
+          activeAds = countByCampaign(await paged(deliveryUrl('ads', account.accountId, token)))
+          activeAdsets = countByCampaign(await paged(deliveryUrl('adsets', account.accountId, token)))
+        } catch (error) {
+          deliveryKnown = false
+          notes.push(`${account.name}: מצב המודעות לא נקרא, נשענים על סטטוס הקמפיין (${stripSecrets(error instanceof Error ? error.message : 'ads').slice(0, 120)})`)
+        }
         const catalog = new Map<string, Record<string, unknown>>()
-        for (const row of catalogPage) {
-          const id = String(row.id ?? '')
-          if (!id) continue
+        const putCampaign = (id: string, name: string, status: string, currency: string) => {
           catalog.set(id, {
             account_id: account.accountId,
             campaign_id: id,
-            campaign_name: String(row.name ?? id),
-            currency: account.currency,
-            effective_status: String(row.effective_status ?? ''),
+            campaign_name: name,
+            currency,
+            effective_status: status,
+            delivering: deliveryKnown ? (activeAds.get(id) ?? 0) > 0 : null,
+            active_ads: deliveryKnown ? (activeAds.get(id) ?? 0) : null,
+            active_adsets: deliveryKnown ? (activeAdsets.get(id) ?? 0) : null,
             updated_at: new Date().toISOString(),
           })
         }
+        for (const row of catalogPage) {
+          const id = String(row.id ?? '')
+          if (!id) continue
+          putCampaign(id, String(row.name ?? id), String(row.effective_status ?? ''), account.currency)
+        }
         for (const slice of slices) {
           if (!catalog.has(slice.campaignId)) {
-            catalog.set(slice.campaignId, {
-              account_id: account.accountId,
-              campaign_id: slice.campaignId,
-              campaign_name: slice.campaignName,
-              currency: slice.currency || account.currency,
-              effective_status: '',
-              updated_at: new Date().toISOString(),
-            })
+            putCampaign(slice.campaignId, slice.campaignName, '', slice.currency || account.currency)
           }
         }
-        await upsertChunks(supabase, 'meta_campaigns', [...catalog.values()])
+        await upsertCampaigns(supabase, [...catalog.values()])
         dailyRows += daily.length
         todayRows += live.length
         syncedAccounts += 1
