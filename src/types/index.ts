@@ -208,6 +208,9 @@ export interface Candidate {
   metaAccountId?: string
   /** Meta campaign id. Set only when מקור הגעה is a real campaign. */
   metaCampaignId?: string
+  /** Set only when a WhatsApp ad referral matched a stored ad. */
+  metaAdsetId?: string
+  metaAdId?: string
   savedPositionId?: string  // שיוך ראשי (compat)
   savedPositionIds?: string[] // שיוך למשרות מרובות
   nonaStatus: NonaStatus    // סטטוס הקמת משתמש נונה
