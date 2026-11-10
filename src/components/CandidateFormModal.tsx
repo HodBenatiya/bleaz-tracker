@@ -3,6 +3,7 @@ import { FileText, Loader2, Search, Upload, X } from 'lucide-react'
 import { cvStorageKey } from '../utils/storageKey'
 import { signedStorageUrl } from '../utils/storageUrl'
 import { supabase } from '../utils/supabase'
+import { loadCampaignNames } from '../utils/metaAdsStore'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
 import AttributionMonthField from './AttributionMonthField'
@@ -40,10 +41,17 @@ interface Props {
 
 export default function CandidateFormModal({ initial, editing, positions, onClose, onSubmit, noteSeed, noteDrafting, onRegenerateNote }: Props) {
   const [form, setForm] = useState<Candidate>(initial)
+  const [campaignNames, setCampaignNames] = useState<string[]>([])
   const [positionSearch, setPositionSearch] = useState('')
   const [cvUploading, setCvUploading] = useState(false)
   const [noteDirty, setNoteDirty] = useState(false)
   const cvFileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    loadCampaignNames().then(names => { if (!cancelled) setCampaignNames(names) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     if (!noteSeed?.text) return
@@ -133,10 +141,18 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
             </div>
             <div>
               {lbl('מקור הגעה')}
-              <select value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} className="input w-full text-sm">
-                <option value="">בחר...</option>
-                {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <input
+                list="lead-sources"
+                value={form.source}
+                onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
+                className="input w-full text-sm"
+                placeholder="שם הקמפיין, או WhatsApp"
+              />
+              <datalist id="lead-sources">
+                {SOURCES.map(source => <option key={source} value={source} />)}
+                {campaignNames.map(source => <option key={source} value={source} />)}
+              </datalist>
+              <p className="text-[10px] text-slate-400 mt-1">שם קמפיין מדויק משייך את הליד. בלי שם ובלי משרה הוא נשאר לא משויך.</p>
             </div>
             <div>
               {lbl('סטטוס')}

@@ -1,0 +1,4 @@
+project_id = "jiqhnonfqmcvdmkjbdds"
+
+[functions.meta-ads-sync]
+verify_jwt = false
