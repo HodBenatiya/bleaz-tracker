@@ -119,7 +119,10 @@ create table if not exists public.meta_sync_log (
   message text not null default ''
 );
 
--- ── locks: signed-in read, service-role write, mapping from the CRM ────────
+-- ── locks ───────────────────────────────────────────────────────────────────
+-- Supabase grants ALL (including TRUNCATE) to authenticated on new public tables.
+-- Take that back. Signed-in users get SELECT only, then the two CRM writes below.
+-- service_role keeps full access for the hourly sync.
 
 do $rls$
 declare
@@ -137,7 +140,7 @@ begin
   ]
   loop
     execute format('alter table public.%I enable row level security', tbl);
-    execute format('revoke all on table public.%I from public, anon', tbl);
+    execute format('revoke all on table public.%I from public, anon, authenticated', tbl);
     execute format('grant select on table public.%I to authenticated', tbl);
     execute format('grant all on table public.%I to service_role', tbl);
   end loop;
@@ -173,6 +176,7 @@ begin
 end
 $pol$;
 
+-- Mapping is edited in the CRM. No TRUNCATE.
 grant insert, update, delete on table public.meta_campaign_positions to authenticated;
 
 do $map$
@@ -190,7 +194,8 @@ begin
 end
 $map$;
 
-grant update on table public.meta_ads_settings to authenticated;
+-- Rate edits touch only these two columns. Table-level UPDATE stays revoked.
+grant update (usd_to_ils, updated_at) on table public.meta_ads_settings to authenticated;
 
 do $fx$
 begin
