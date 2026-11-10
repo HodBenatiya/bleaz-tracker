@@ -18,6 +18,7 @@ export function examplePositions(): SavedPosition[] {
     { ...base, id: 'ex-bdo', companyName: 'BDO', positionTitle: 'מנהלת חשבונות' },
     { ...base, id: 'ex-meitav', companyName: 'מיטב', positionTitle: 'שירות לקוחות' },
     { ...base, id: 'ex-clal', companyName: 'כלל', positionTitle: 'רפרנט תפעול' },
+    { ...base, id: 'ex-old', companyName: 'ישן', positionTitle: 'משרה ישנה', isActive: false },
   ]
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DailyReport, Candidate, SavedPosition } from '../types'
 import { toISODate } from '../utils/helpers'
 import { candidateAnchor, classifyPlacementForSpendRange } from '../utils/candidateAnchor'
@@ -97,6 +97,118 @@ function buildCampaignRows(reports: DailyReport[]): CampaignRow[] {
       cpl: leads > 0 ? spend / leads : 0,
     }))
     .sort((a, b) => b.spend - a.spend)
+}
+
+// ── job filter ────────────────────────────────────────────────────────────────
+
+const JOB_CHIPS = 2
+
+function jobLabel(position: SavedPosition): string {
+  return `${position.positionTitle} · ${position.companyName}`
+}
+
+function JobMultiSelect({ positions, selectedIds, onToggle, onClear }: {
+  positions: SavedPosition[]
+  selectedIds: string[]
+  onToggle: (id: string) => void
+  onClear: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [showInactive, setShowInactive] = useState(false)
+  const boxRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onPointer(event: MouseEvent) {
+      if (!boxRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const needle = query.trim().toLowerCase()
+  const listed = positions
+    .filter(position => {
+      if (!showInactive && !position.isActive && !selectedIds.includes(position.id)) return false
+      if (!needle) return true
+      return jobLabel(position).toLowerCase().includes(needle)
+    })
+    .sort((a, b) => Number(b.isActive) - Number(a.isActive) || jobLabel(a).localeCompare(jobLabel(b), 'he'))
+
+  const selected = selectedIds
+    .map(id => positions.find(position => position.id === id))
+    .filter((position): position is SavedPosition => !!position)
+  const chips = selected.slice(0, JOB_CHIPS)
+
+  return (
+    <div ref={boxRef} className="relative max-w-xl">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(value => !value)}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+        >
+          {selected.length === 0 && <span>כל המשרות</span>}
+          {selected.length > 0 && <span>משרות</span>}
+          <span className="text-slate-400">{open ? '▴' : '▾'}</span>
+        </button>
+        {chips.map(position => (
+          <button
+            key={position.id}
+            type="button"
+            title={jobLabel(position)}
+            onClick={() => onToggle(position.id)}
+            className="inline-flex max-w-48 items-center gap-1 rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-white"
+          >
+            <span className="truncate">{position.positionTitle}{position.isActive ? '' : ' · לא פעילה'}</span>
+            <span aria-hidden>×</span>
+          </button>
+        ))}
+        {selected.length > 0 && (
+          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{selected.length} נבחרו</span>
+        )}
+      </div>
+      {open && (
+        <div className="absolute z-30 mt-2 w-full min-w-72 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+          <input
+            autoFocus
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="חיפוש משרה או לקוח"
+            className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+          />
+          <div className="flex items-center justify-between gap-2 px-1 py-2">
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input type="checkbox" checked={showInactive} onChange={event => setShowInactive(event.target.checked)} />
+              הצג גם לא פעילות
+            </label>
+            <button type="button" onClick={onClear} className="text-xs font-semibold text-slate-500 hover:text-slate-800">כל המשרות</button>
+          </div>
+          <ul className="max-h-64 overflow-y-auto">
+            {listed.map(position => (
+              <li key={position.id}>
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">
+                  <input type="checkbox" checked={selectedIds.includes(position.id)} onChange={() => onToggle(position.id)} />
+                  <span className="min-w-0 flex-1 truncate">{jobLabel(position)}</span>
+                  {!position.isActive && <span className="shrink-0 text-[10px] text-slate-400">לא פעילה</span>}
+                </label>
+              </li>
+            ))}
+            {listed.length === 0 && <li className="px-2 py-3 text-xs text-slate-400">אין משרות תואמות</li>}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
@@ -235,26 +347,9 @@ export default function MarketingROI({ reports, candidates, positions, exampleOn
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 mt-4">
-          <button
-            type="button"
-            onClick={() => setJobIds([])}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold ${jobIds.length === 0 ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
-          >
-            כל המשרות
-          </button>
-          {filterPositions.map(position => (
-            <button
-              key={position.id}
-              type="button"
-              onClick={() => toggleJob(position.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold ${jobIds.includes(position.id) ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
-            >
-              {position.positionTitle} · {position.companyName}{position.isActive ? '' : ' · לא פעילה'}
-            </button>
-          ))}
+        <div className="mt-4">
+          <JobMultiSelect positions={filterPositions} selectedIds={jobIds} onToggle={toggleJob} onClear={() => setJobIds([])} />
         </div>
-        <p className="text-[11px] text-slate-400 mt-2">אפשר לבחור משרה אחת או כמה. בלי בחירה רואים את הכל.</p>
         {!example && fallbackCount > 0 && (
           <p className="text-[11px] text-amber-700 mt-3">{fallbackCount} מועמדים בלי תאריך יצירה נספרו לפי התאריך המוקדם ביותר שיש להם.</p>
         )}
