@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { adFromReferral } from '../src/utils/metaAds/adLink'
+import { creativeFatigue, insightLeads, parseAdMetric, placementLabel } from '../src/utils/metaAds/adMetrics'
 import { referralFromRecord } from '../src/utils/metaAds/adReferral'
+import { backoffMs, rateLimitCode } from '../src/utils/metaAds/rateLimit'
 import { campaignFunnel } from '../src/utils/metaAds/campaignFunnel'
 import { inferCampaign } from '../src/utils/metaAds/inferCampaign'
 import { campaignIsLive, updatedAgo, visibleCampaigns } from '../src/utils/metaAds/live'
@@ -319,5 +322,37 @@ const referral = referralFromRecord({
 assert.equal(referral?.sourceId, '111')
 assert.equal(referral?.title, 'מנהלת חשבונות BDO')
 assert.equal(referralFromRecord({ body: 'סתם הודעה' }), undefined)
+
+const parsedAd = parseAdMetric({
+  campaign_id: '111',
+  adset_id: '22',
+  ad_id: '33',
+  ad_name: 'מודעה',
+  date_start: '2026-11-10',
+  spend: '30',
+  impressions: '1000',
+  reach: '400',
+  clicks: '25',
+  inline_link_clicks: '10',
+  actions: [{ action_type: 'lead', value: '4' }, { action_type: 'onsite_conversion.messaging_conversation_started_7d', value: '2' }],
+}, 'USD')
+assert.equal(parsedAd?.leads, 2)
+assert.equal(parsedAd?.leadAction, 'onsite_conversion.messaging_conversation_started_7d')
+assert.equal(parsedAd?.costPerLead, 15)
+assert.equal(insightLeads([{ action_type: 'lead', value: '9' }]).leads, 9)
+assert.equal(placementLabel('instagram', 'instagram_stories'), 'אינסטגרם סטוריז')
+assert.equal(placementLabel('facebook', 'feed'), 'פיד פייסבוק')
+assert.equal(creativeFatigue({ days: 3, frequencyRecent: 2.2, frequencyPrior: 1.4, ctrRecent: 0.01, ctrPrior: 0.02, cplRecent: 40, cplPrior: 20 }), true)
+assert.equal(creativeFatigue({ days: 2, frequencyRecent: 2.2, frequencyPrior: 1.4, ctrRecent: 0.01, ctrPrior: 0.02, cplRecent: 40, cplPrior: 20 }), false)
+assert.equal(rateLimitCode({ code: 17 }), 17)
+assert.equal(rateLimitCode({ code: 100, error_subcode: 80004 }), 80004)
+assert.equal(rateLimitCode({ code: 190 }), null)
+assert.equal(backoffMs(0), 2000)
+assert.equal(backoffMs(3), 16000)
+assert.equal(adFromReferral(
+  [{ sourceId: '33' }],
+  [{ accountId: 'act_1', adId: '33', adsetId: '22', campaignId: '111', campaignName: 'BDO' }],
+)?.adsetId, '22')
+assert.equal(adFromReferral([{ sourceId: '999' }], [{ accountId: 'act_1', adId: '33', adsetId: '22', campaignId: '111', campaignName: 'BDO' }]), null)
 
 console.log('meta ads selfcheck ok')

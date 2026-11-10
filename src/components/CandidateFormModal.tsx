@@ -3,8 +3,9 @@ import { FileText, Loader2, Search, Upload, X } from 'lucide-react'
 import { cvStorageKey } from '../utils/storageKey'
 import { signedStorageUrl } from '../utils/storageUrl'
 import { supabase } from '../utils/supabase'
+import { adFromReferral, type KnownAd } from '../utils/metaAds/adLink'
 import { inferCampaign, isGenericSource, type CampaignInference } from '../utils/metaAds/inferCampaign'
-import { loadCampaignChoices, loadCampaignPositionMaps, type CampaignChoice } from '../utils/metaAdsStore'
+import { loadCampaignChoices, loadCampaignPositionMaps, loadKnownAds, type CampaignChoice } from '../utils/metaAdsStore'
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition, WaMessage } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
 import AttributionMonthField from './AttributionMonthField'
@@ -43,6 +44,7 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
   const [form, setForm] = useState<Candidate>(initial)
   const [choices, setChoices] = useState<CampaignChoice[]>([])
   const [maps, setMaps] = useState<{ accountId: string; campaignId: string; positionId: string }[]>([])
+  const [knownAds, setKnownAds] = useState<KnownAd[]>([])
   const [picking, setPicking] = useState(!!initial.metaCampaignId)
   const [campaignQuery, setCampaignQuery] = useState('')
   const [suggestion, setSuggestion] = useState<CampaignInference | null>(null)
@@ -56,10 +58,11 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([loadCampaignChoices(), loadCampaignPositionMaps()]).then(([nextChoices, nextMaps]) => {
+    Promise.all([loadCampaignChoices(), loadCampaignPositionMaps(), loadKnownAds()]).then(([nextChoices, nextMaps, nextAds]) => {
       if (cancelled) return
       setChoices(nextChoices)
       setMaps(nextMaps)
+      setKnownAds(nextAds)
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])
@@ -68,6 +71,21 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
     if (sourceTouched.current || inferredOnce.current || form.metaCampaignId || !choices.length) return
     const referrals = [...(leadMessages ?? []), ...(form.waMessages ?? [])].flatMap(message => message.adReferral ? [message.adReferral] : [])
     const positionIds = form.savedPositionIds ?? (form.savedPositionId ? [form.savedPositionId] : [])
+    const ad = adFromReferral(referrals, knownAds)
+    if (ad && (isGenericSource(form.source) || !form.source)) {
+      inferredOnce.current = true
+      setAutoPicked(true)
+      setPicking(true)
+      setForm(current => ({
+        ...current,
+        source: choices.find(choice => choice.accountId === ad.accountId && choice.campaignId === ad.campaignId)?.campaignName || current.source,
+        metaAccountId: ad.accountId,
+        metaCampaignId: ad.campaignId,
+        metaAdsetId: ad.adsetId,
+        metaAdId: ad.adId,
+      }))
+      return
+    }
     const hit = inferCampaign({ campaigns: choices, maps, referrals, source: form.source, positionIds })
     if (!hit) return
     const sameName = hit.campaignName && form.source && form.source.trim() === hit.campaignName
@@ -83,8 +101,10 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
       source: hit.campaignName,
       metaAccountId: hit.accountId,
       metaCampaignId: hit.campaignId,
+      metaAdsetId: undefined,
+      metaAdId: undefined,
     }))
-  }, [choices, maps, leadMessages, form.metaCampaignId, form.source, form.savedPositionId, form.savedPositionIds, form.waMessages])
+  }, [choices, maps, knownAds, leadMessages, form.metaCampaignId, form.source, form.savedPositionId, form.savedPositionIds, form.waMessages])
 
   useEffect(() => {
     if (!noteSeed?.text) return
@@ -191,6 +211,8 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
                     const next = { ...current, source: 'אורגני' }
                     delete next.metaAccountId
                     delete next.metaCampaignId
+                    delete next.metaAdsetId
+                    delete next.metaAdId
                     return next
                   })
                 }}
@@ -205,6 +227,8 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
                     source: choice.campaignName,
                     metaAccountId: choice.accountId,
                     metaCampaignId: choice.campaignId,
+                    metaAdsetId: undefined,
+                    metaAdId: undefined,
                   }))
                 }}
                 onApplySuggestion={() => {

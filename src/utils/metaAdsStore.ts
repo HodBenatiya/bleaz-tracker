@@ -236,6 +236,50 @@ export async function loadCampaignChoices(): Promise<CampaignChoice[]> {
   }).sort((a, b) => Number(b.active) - Number(a.active) || a.campaignName.localeCompare(b.campaignName, 'he'))
 }
 
+export async function loadKnownAds(): Promise<{ accountId: string; adId: string; adsetId: string; campaignId: string; campaignName: string }[]> {
+  const { data, error } = await supabase.from('meta_ads').select('account_id,ad_id,adset_id,campaign_id,name').limit(2000)
+  if (error || !data) return []
+  return data.map(row => ({
+    accountId: String(row.account_id),
+    adId: String(row.ad_id),
+    adsetId: String(row.adset_id ?? ''),
+    campaignId: String(row.campaign_id ?? ''),
+    campaignName: String(row.name ?? ''),
+  }))
+}
+
+export interface PlacementSpend {
+  platform: string
+  position: string
+  spend: number
+  currency: string
+  leads: number
+}
+
+export async function loadPlacementSpend(start: string, end: string): Promise<PlacementSpend[] | null> {
+  const { data, error } = await supabase.from('meta_ad_placement_insights_daily')
+    .select('publisher_platform,platform_position,spend,currency,leads,insight_date')
+    .gte('insight_date', start)
+    .lte('insight_date', end)
+    .limit(5000)
+  if (error) {
+    if (/schema cache|does not exist|could not find/i.test(error.message)) return null
+    return null
+  }
+  const grouped = new Map<string, PlacementSpend>()
+  for (const row of data ?? []) {
+    const platform = String(row.publisher_platform ?? '')
+    const position = String(row.platform_position ?? '')
+    const currency = String(row.currency ?? '')
+    const key = `${platform}|${position}|${currency}`
+    const current = grouped.get(key) ?? { platform, position, currency, spend: 0, leads: 0 }
+    current.spend += Number(row.spend ?? 0) || 0
+    current.leads += Number(row.leads ?? 0) || 0
+    grouped.set(key, current)
+  }
+  return [...grouped.values()].sort((a, b) => b.spend - a.spend)
+}
+
 export async function loadCampaignNames(): Promise<string[]> {
   const { data, error } = await supabase.from('meta_campaigns').select('campaign_name').limit(500)
   if (error || !data) return []

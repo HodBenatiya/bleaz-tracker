@@ -1,3 +1,5 @@
+-- Superseded by schema_meta_insights_cron.sql (30-minute today + nightly close).
+-- Running this file only removes the old hourly job. It does not delete ad data.
 -- Hourly schedule for the Meta ads sync. Run this AFTER:
 -- 1. schema_meta_ads.sql
 -- 2. the edge function meta-ads-sync is deployed
@@ -24,21 +26,5 @@ begin
   if existing is not null then
     perform cron.unschedule(existing);
   end if;
-
-  perform cron.schedule(
-    'meta-ads-hourly',
-    '5 * * * *',
-    $cmd$
-    select net.http_post(
-      url := 'https://jiqhnonfqmcvdmkjbdds.supabase.co/functions/v1/meta-ads-sync',
-      body := '{"backfill_days":3}'::jsonb,
-      headers := jsonb_build_object(
-        'Content-Type', 'application/json',
-        'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'meta_sync_secret' limit 1)
-      ),
-      timeout_milliseconds := 120000
-    );
-    $cmd$
-  );
 end
 $outer$;

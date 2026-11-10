@@ -113,13 +113,13 @@ export async function saveTasks(tasks: Task[]): Promise<void> {
 // ── Candidates ────────────────────────────────────────────────────────────────
 
 function missingCampaignColumns(message: string): boolean {
-  return /meta_account_id|meta_campaign_id|schema cache|could not find the/i.test(message)
+  return /meta_account_id|meta_campaign_id|meta_adset_id|meta_ad_id|schema cache|could not find the/i.test(message)
 }
 
 export async function loadCandidates(): Promise<Candidate[]> {
   const withColumns = await supabase
     .from('candidates')
-    .select('data, meta_account_id, meta_campaign_id')
+    .select('data, meta_account_id, meta_campaign_id, meta_adset_id, meta_ad_id')
     .order('updated_at', { ascending: false })
   const rows = withColumns.error && missingCampaignColumns(withColumns.error.message)
     ? await supabase.from('candidates').select('data').order('updated_at', { ascending: false })
@@ -127,10 +127,11 @@ export async function loadCandidates(): Promise<Candidate[]> {
   if (rows.error) { console.error('loadCandidates:', rows.error); return [] }
   return (rows.data ?? []).map(row => {
     const candidate = row.data as Candidate
-    const accountId = (row as { meta_account_id?: string | null }).meta_account_id
-    const campaignId = (row as { meta_campaign_id?: string | null }).meta_campaign_id
-    if (!candidate.metaAccountId && accountId) candidate.metaAccountId = accountId
-    if (!candidate.metaCampaignId && campaignId) candidate.metaCampaignId = campaignId
+    const extra = row as { meta_account_id?: string | null; meta_campaign_id?: string | null; meta_adset_id?: string | null; meta_ad_id?: string | null }
+    if (!candidate.metaAccountId && extra.meta_account_id) candidate.metaAccountId = extra.meta_account_id
+    if (!candidate.metaCampaignId && extra.meta_campaign_id) candidate.metaCampaignId = extra.meta_campaign_id
+    if (!candidate.metaAdsetId && extra.meta_adset_id) candidate.metaAdsetId = extra.meta_adset_id
+    if (!candidate.metaAdId && extra.meta_ad_id) candidate.metaAdId = extra.meta_ad_id
     return candidate
   })
 }
@@ -140,22 +141,27 @@ export async function upsertCandidate(candidate: Candidate): Promise<Candidate> 
     .from('candidates').select('data').eq('id', candidate.id).maybeSingle()
   if (readErr) throw new Error(readErr.message)
   const merged = mergeCandidateSave(freshRow?.data as Candidate | undefined, candidate)
-  const row = {
-    id: merged.id,
-    data: merged,
-    updated_at: new Date().toISOString(),
+  const base = { id: merged.id, data: merged, updated_at: new Date().toISOString() }
+  const full = {
+    ...base,
+    meta_account_id: merged.metaAccountId || null,
+    meta_campaign_id: merged.metaCampaignId || null,
+    meta_adset_id: merged.metaAdsetId || null,
+    meta_ad_id: merged.metaAdId || null,
+  }
+  const campaignOnly = {
+    ...base,
     meta_account_id: merged.metaAccountId || null,
     meta_campaign_id: merged.metaCampaignId || null,
   }
-  const { error } = await supabase.from('candidates').upsert(row)
+  let { error } = await supabase.from('candidates').upsert(full)
+  if (error && /meta_adset_id|meta_ad_id/i.test(error.message)) {
+    const retry = await supabase.from('candidates').upsert(campaignOnly)
+    error = retry.error
+  }
   if (error && missingCampaignColumns(error.message)) {
-    const { error: retry } = await supabase.from('candidates').upsert({
-      id: row.id,
-      data: row.data,
-      updated_at: row.updated_at,
-    })
-    if (retry) throw new Error(retry.message)
-    return merged
+    const retry = await supabase.from('candidates').upsert(base)
+    error = retry.error
   }
   if (error) throw new Error(error.message)
   return merged

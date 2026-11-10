@@ -7,12 +7,15 @@ import { campaignIsLive, updatedAgo, visibleCampaigns } from '../utils/metaAds/l
 import { campaignsFromMaps, computeAdsMetrics, metricLeads, type ScopeMetrics, type SpendSlice } from '../utils/metaAds/metrics'
 import { costOf, formatCost, formatMoney, formatMoneyBag } from '../utils/metaAds/money'
 import { METRIC_COPY } from '../utils/metaAds/stages'
+import { placementLabel } from '../utils/metaAds/adMetrics'
 import {
   loadAdsBundle,
+  loadPlacementSpend,
   mapCampaignPosition,
   saveUsdToIls,
   unmapCampaignPosition,
   type AdsBundle,
+  type PlacementSpend,
 } from '../utils/metaAdsStore'
 import { todayInIsrael } from '../utils/metaAds/zone'
 
@@ -68,6 +71,7 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
   const [notice, setNotice] = useState<string | null>(null)
   const [mapOpen, setMapOpen] = useState(true)
   const [mapQuery, setMapQuery] = useState('')
+  const [placements, setPlacements] = useState<PlacementSpend[] | null>(null)
   const [addJob, setAddJob] = useState<Record<string, string>>({})
 
   const reload = useCallback(async () => {
@@ -87,6 +91,13 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
   }, [example, start, end])
 
   useEffect(() => { void reload() }, [reload])
+
+  useEffect(() => {
+    if (example) { setPlacements(null); return }
+    let cancelled = false
+    loadPlacementSpend(start, end).then(rows => { if (!cancelled) setPlacements(rows) }).catch(() => { if (!cancelled) setPlacements(null) })
+    return () => { cancelled = true }
+  }, [example, start, end])
 
   const sample = useMemo(() => example ? exampleBundle(todayInIsrael()) : null, [example])
   const data = sample?.bundle ?? bundle
@@ -163,6 +174,12 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
   }
 
   const selection = report?.selection
+  const placementRows = example
+    ? [
+      { platform: 'instagram', position: 'instagram_stories', spend: 120, currency: 'USD', leads: 4 },
+      { platform: 'facebook', position: 'feed', spend: 80, currency: 'USD', leads: 2 },
+    ]
+    : (placements ?? [])
   const spendText = selection ? formatMoneyBag(selection.money.byCurrency) : '—'
   const spendNote = selection?.money.usesRate
     ? 'השער הוא רק לתצוגה, לא המרה רשמית'
@@ -252,6 +269,24 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
           <p className="px-5 py-3 text-[11px] text-slate-500 leading-relaxed border-t border-slate-100">
             לא משויך: קמפיין בלי משרה, או ליד בלי משרה ובלי מקור הגעה שתואם לקמפיין אחד שכבר משויך. המערכת לא מנחשת.
           </p>
+        </div>
+      )}
+
+      {placementRows.length > 0 && (
+        <div className="card">
+          <h3 className="text-base font-bold text-slate-800">איפה המודעה רצה</h3>
+          <p className="text-xs text-slate-500 mt-0.5">הוצאה ולידים לפי מקום במטא, בטווח שנבחר. התאריך הוא לפי שעון חשבון המודעות.</p>
+          <div className="mt-3 space-y-2">
+            {placementRows.slice(0, 6).map(row => (
+              <div key={`${row.platform}-${row.position}-${row.currency}`} className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-slate-800">{placementLabel(row.platform, row.position)}</span>
+                <span className="text-slate-600 whitespace-nowrap">
+                  {formatMoney(row.spend, row.currency)} · {row.leads} לידים
+                  {row.leads > 0 ? ` · ${formatMoney(row.spend / row.leads, row.currency)} לליד` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
