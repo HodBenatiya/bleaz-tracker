@@ -126,3 +126,134 @@ export function draftFromText(chat: string, cv: string, extraNotes: string[] = [
 export function looksLikeAutoDraft(notes: string): boolean {
   return notes.trimStart().startsWith(HEADER)
 }
+
+const PHONE = /(?:\+?972|0)5\d{8}/g
+const CHAT_BUDGET = 7_000
+const CV_BUDGET = 6_000
+
+export const NOTE_DRAFT_SYSTEM = `כתוב טיוטת הערת סינון בעברית למגייס. זו טיוטה לניתוח, לא תמלול ולא העתק של השיחה, והיא לא נשמרת מכאן.
+
+מזג שני מקורות בלבד:
+1. קורות החיים, אם יש: מי המועמד, גיל אם צוין, היסטוריית עבודה, ניסיון רלוונטי, השכלה וכישורים.
+2. שיחת הוואטסאפ עם הליד: עובדות שהמועמד מסר והעדפות או אילוצים שהביע, למשל איפה הוא גר, איזו משרה הוא מחפש, שעות וזמינות, תאריך התחלה, ציפיות שכר, רכב והסעות, שפות, העדפת תחום, ומה שאמר על תפקידים קודמים. הודעות שלנו נותנות הקשר בלבד ואינן עובדות על המועמד.
+
+פלט: סיכום אחד תמציתי בטון מקצועי וישיר, בלי אימוג'י, בלי ציון ובלי מספרי טלפון.
+מבנה:
+- שורת פרופיל קצרה
+- ניסיון מתוך קורות החיים
+- מה עלה בשיחה (מיקום, זמינות, העדפות משרה, אילוצים)
+- שורת התאמה קצרה: לאן זה מתאים (למשל מוקד או פיננסים), פערים, ושאלות פתוחות לשיחת הסינון
+
+אל תצטט את השיחה כלשונה ואל תמנה הודעות. סכם.
+אם חסר מקור (אין קורות חיים, או אין בשיחה מידע שימושי), כתוב זאת בקצרה והשתמש במה שקיים.
+אל תמציא פרטים שלא מופיעים בקורות החיים או בשיחה.
+פתח בשורה המדויקת: ${HEADER}`
+
+export interface NoteDraftMessage {
+  direction?: string
+  text?: string
+  caption?: string
+}
+
+export interface NoteDraftImage {
+  mime: string
+  base64: string
+}
+
+export interface NoteDraftPrompt {
+  system: string
+  user: string
+  image?: NoteDraftImage
+  hasSource: boolean
+}
+
+export type NoteDraftLlmContent =
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'image_url'; image_url: { url: string; detail: 'low' } }
+    >
+
+export interface NoteDraftLlmMessage {
+  role: 'system' | 'user'
+  content: NoteDraftLlmContent
+}
+
+function redact(value: string): string {
+  return value.replace(PHONE, '')
+}
+
+function lineFor(message: NoteDraftMessage): string {
+  const raw = String(message.text || '').trim() || String(message.caption || '').trim()
+  const text = redact(raw).replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  const who = message.direction === 'out' ? 'אנחנו' : 'מועמד'
+  return `[${who}] ${text}`
+}
+
+/** Newest lines win the budget. The kept lines stay in chronological order. */
+function conversationBlock(messages: NoteDraftMessage[]): { text: string; count: number } {
+  const lines = (messages || []).map(lineFor).filter(Boolean)
+  const kept: string[] = []
+  let used = 0
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    const cost = kept.length ? line.length + 1 : line.length
+    if (cost > CHAT_BUDGET) {
+      if (!kept.length) kept.push(line.slice(line.length - CHAT_BUDGET))
+      break
+    }
+    if (used + cost > CHAT_BUDGET) break
+    kept.push(line)
+    used += cost
+  }
+  kept.reverse()
+  const omitted = lines.length - kept.length
+  const header = omitted > 0
+    ? `שיחה (ההודעות האחרונות, מהישן לחדש; ${omitted} הודעות ישנות הושמטו. "מועמד" = עובדה על המועמד, "אנחנו" = הקשר בלבד ולא עובדה):`
+    : 'שיחה (מהישן לחדש. "מועמד" = עובדה על המועמד, "אנחנו" = הקשר בלבד ולא עובדה):'
+  const body = kept.length ? kept.join('\n') : 'אין טקסט שיחה.'
+  return { text: `${header}\n${body}`, count: lines.length }
+}
+
+function cvBlock(cvText: string, image?: NoteDraftImage): string {
+  const text = redact(cvText).trim()
+  const clipped = text ? text.slice(0, CV_BUDGET) : ''
+  if (clipped && image) return `קורות חיים (טקסט שחולץ, והתמונה מצורפת להודעה):\n${clipped}`
+  if (clipped) return `קורות חיים:\n${clipped}`
+  if (image) return 'קורות חיים: צורפו כתמונה ומצורפות להודעה. אין טקסט מחולץ.'
+  return 'קורות חיים: לא צורפו.'
+}
+
+export function buildNoteDraftPrompt(input: {
+  messages: NoteDraftMessage[]
+  cvText?: string
+  image?: NoteDraftImage | null
+}): NoteDraftPrompt {
+  const image = input.image?.base64 ? input.image : undefined
+  const chat = conversationBlock(input.messages || [])
+  const cvText = input.cvText || ''
+  return {
+    system: NOTE_DRAFT_SYSTEM,
+    user: `${chat.text}\n\n${cvBlock(cvText, image)}`,
+    image,
+    hasSource: chat.count > 0 || Boolean(redact(cvText).trim()) || Boolean(image),
+  }
+}
+
+/** The chat-completions messages actually sent for the draft. */
+export function noteDraftLlmMessages(prompt: NoteDraftPrompt): NoteDraftLlmMessage[] {
+  const user: NoteDraftLlmContent = prompt.image
+    ? [
+        { type: 'text', text: prompt.user },
+        {
+          type: 'image_url',
+          image_url: { url: `data:${prompt.image.mime};base64,${prompt.image.base64}`, detail: 'low' },
+        },
+      ]
+    : prompt.user
+  return [
+    { role: 'system', content: prompt.system },
+    { role: 'user', content: user },
+  ]
+}

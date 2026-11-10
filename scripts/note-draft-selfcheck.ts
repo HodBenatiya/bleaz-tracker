@@ -5,7 +5,7 @@ import fontkit from '@pdf-lib/fontkit'
 import { PDFDocument } from 'pdf-lib'
 import { readImageCv } from '../api/_cvVision'
 import { extractCvText, extractDocxText, extractPdfText, inspectCv, isUsableCvText, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText'
-import { draftFromText, extractNoteFacts, IMAGE_CV_STATUS, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft'
+import { buildNoteDraftPrompt, draftFromText, extractNoteFacts, IMAGE_CV_STATUS, noteDraftLlmMessages, UNSUPPORTED_CV_STATUS } from '../src/utils/noteDraft'
 import { looksLikeCv } from '../src/utils/wa'
 
 const chat = 'שלום, אני גר בתל אביב ומחפש משרה מלאה במוקד שירות. זמין מיידית. גיל 29. פונה לגבי נציג מכירות.'
@@ -223,5 +223,72 @@ assert.equal((await inspectCv(pagesPdf, 'application/x-iwork-pages-sffpages', 'a
 assert.equal((await inspectCv(previewOnly, '', 'only.pages')).kind, 'image')
 assert.equal((await inspectCv(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 'image/jpeg', 'photo.jpg')).kind, 'image')
 assert.equal((await inspectCv(new Uint8Array([1, 2, 3, 4]), 'application/octet-stream', 'mystery.bin')).kind, 'unsupported')
+
+const analysisCv = 'ניסיון של שלוש שנים במוקד שירות. תואר ראשון בכלכלה. גיל 27.'
+const prompt = buildNoteDraftPrompt({
+  messages: [
+    { direction: 'out', text: 'שלום, ספר לי איפה אתה גר ואילו שעות נוחות' },
+    { direction: 'in', text: 'גר ברמת גן' },
+    { direction: 'in', text: 'מחפש משרה עד 15:00. הטלפון שלי 0501234567' },
+  ],
+  cvText: analysisCv,
+})
+assert.equal(prompt.hasSource, true)
+assert.match(prompt.system, /לא תמלול/)
+assert.match(prompt.system, /אל תצטט/)
+assert.match(prompt.system, /טיוטה אוטומטית – לבדוק/)
+assert.match(prompt.user, /\[אנחנו\] שלום, ספר לי איפה אתה גר/)
+assert.match(prompt.user, /\[מועמד\] גר ברמת גן/)
+assert.match(prompt.user, /עד 15:00/)
+assert.match(prompt.user, /מוקד שירות/)
+assert.doesNotMatch(prompt.user, /0501234567/)
+const sent = noteDraftLlmMessages(prompt)
+assert.equal(sent[0].role, 'system')
+assert.equal(sent[1].content, prompt.user)
+assert.match(String(sent[1].content), /גר ברמת גן/)
+assert.match(String(sent[1].content), /עד 15:00/)
+
+const filler = 'הודעה ישנה בלי פרט חדש על המועמד. '.repeat(20)
+const longChat = buildNoteDraftPrompt({
+  messages: [
+    ...Array.from({ length: 40 }, (_, i) => ({ direction: 'in', text: `ישנה ${i}: ${filler}` })),
+    { direction: 'out', text: 'איפה אתה גר ומה השעות?' },
+    { direction: 'in', text: 'גר ברמת גן' },
+    { direction: 'in', text: 'מחפש משרה עד 15:00' },
+  ],
+  cvText: analysisCv,
+})
+assert.match(longChat.user, /גר ברמת גן/)
+assert.match(longChat.user, /עד 15:00/)
+assert.match(longChat.user, /מוקד שירות/)
+assert.match(longChat.user, /הודעות ישנות הושמטו/)
+assert.doesNotMatch(longChat.user, /ישנה 0:/)
+
+const imagePrompt = buildNoteDraftPrompt({
+  messages: [{ direction: 'in', text: 'גר ברמת גן' }, { direction: 'in', text: 'מחפש משרה עד 15:00' }],
+  cvText: 'ניסיון במכירות',
+  image: { mime: 'image/jpeg', base64: 'abcd' },
+})
+const imageMessages = noteDraftLlmMessages(imagePrompt)
+const imageUser = imageMessages[1].content
+assert.ok(Array.isArray(imageUser))
+if (Array.isArray(imageUser)) {
+  assert.equal(imageUser[0].type, 'text')
+  if (imageUser[0].type === 'text') {
+    assert.match(imageUser[0].text, /גר ברמת גן/)
+    assert.match(imageUser[0].text, /עד 15:00/)
+    assert.match(imageUser[0].text, /ניסיון במכירות/)
+  }
+  assert.equal(imageUser[1].type, 'image_url')
+  if (imageUser[1].type === 'image_url') assert.equal(imageUser[1].image_url.url, 'data:image/jpeg;base64,abcd')
+}
+
+const chatOnly = buildNoteDraftPrompt({ messages: [{ direction: 'in', text: 'גר ברמת גן' }], cvText: '  ' })
+assert.equal(chatOnly.hasSource, true)
+assert.match(chatOnly.user, /לא צורפו/)
+const cvOnly = buildNoteDraftPrompt({ messages: [{ direction: 'in', text: '   ' }], cvText: 'תואר ראשון' })
+assert.equal(cvOnly.hasSource, true)
+assert.match(cvOnly.user, /אין טקסט שיחה/)
+assert.equal(buildNoteDraftPrompt({ messages: [], cvText: '' }).hasSource, false)
 
 console.log('note draft selfcheck ok')

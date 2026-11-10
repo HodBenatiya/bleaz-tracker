@@ -359,10 +359,11 @@ function WaInboxScreen({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chatId: thread.chatId,
-          messages: thread.messages.slice(-40).map(message => ({
+          messages: thread.messages.slice(-300).map(message => ({
             id: message.id,
             direction: message.direction,
             text: message.text,
+            caption: message.caption,
             type: message.type,
             fileName: message.fileName,
             mimeType: message.mimeType,
