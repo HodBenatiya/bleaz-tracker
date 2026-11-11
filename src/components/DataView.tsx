@@ -4,6 +4,8 @@ import * as XLSX from 'xlsx'
 import * as pdfjsLib from 'pdfjs-dist'
 import type { Candidate, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
+import { isPlacedStatus } from '../utils/guarantee'
+import GuaranteeBadge from './GuaranteeBadge'
 import { loadCampaignNames } from '../utils/metaAdsStore'
 
 // PDF worker — resolve local file via Vite's asset URL handling
@@ -383,6 +385,7 @@ export default function DataView({ candidates, positions, onChange }: Props) {
               <SortTh label="גיל"     col="age"          sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="עיר"     col="city"         sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="סטטוס"   col="status"       sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <th className="text-right px-4 py-3 font-semibold text-slate-600">אחריות</th>
               <SortTh label="חברה"    col="company"      sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <th className="text-right px-4 py-3 font-semibold text-slate-600">משרה</th>
               <SortTh label="התמחות"  col="positionType" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -410,6 +413,11 @@ export default function DataView({ candidates, positions, onChange }: Props) {
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full w-fit ${CANDIDATE_STATUS_COLORS[c.status]}`}>
                       {CANDIDATE_STATUS_LABELS[c.status]}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {isPlacedStatus(c.status) && c.startDate
+                      ? <GuaranteeBadge candidate={c} positions={positions} />
+                      : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {linkedPos.length > 0

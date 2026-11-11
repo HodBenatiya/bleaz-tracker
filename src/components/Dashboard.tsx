@@ -18,6 +18,8 @@ import {
   calcFunnelFromPositions, calcMonthForecast, calcRoi,
 } from '../utils/helpers'
 import AlertsBanner from './AlertsBanner'
+import GuaranteeBadge from './GuaranteeBadge'
+import { selectGuaranteeAlerts, watchPlacements } from '../utils/guarantee'
 
 interface Props {
   reports:    DailyReport[]
@@ -133,7 +135,7 @@ export default function Dashboard({ reports, positions, pipeline, tasks, candida
         <DashTab id="company" active={tab==='company'} label="לפי חברה" icon={<Building2 size={15}/>}  onClick={setTab} />
       </div>
 
-      {tab === 'daily'   && <DailyView   report={todayReport} pipeline={pipeline} tasks={openTasks} candidates={candidates} onNav={onNav} />}
+      {tab === 'daily'   && <DailyView   report={todayReport} pipeline={pipeline} tasks={openTasks} candidates={candidates} positions={positions} onNav={onNav} />}
       {tab === 'weekly'  && <WeeklyView  reports={reports} positions={positions} weekStart={weekStart} />}
       {tab === 'monthly' && <MonthlyView reports={reports} positions={positions} year={now.getFullYear()} month={now.getMonth()} />}
       {tab === 'company' && <CompanyView reports={reports} selected={selectedCompany} onSelect={setSelectedCompany} />}
@@ -152,11 +154,51 @@ function stuckDays(c: Candidate): number {
   return days >= threshold ? days : 0
 }
 
-function DailyView({ report, pipeline, tasks, candidates, onNav }: {
+function GuaranteeWatch({ candidates, positions }: { candidates: Candidate[]; positions: SavedPosition[] }) {
+  const rows = watchPlacements(candidates, positions)
+  const { endingSoon, newlySafe } = selectGuaranteeAlerts(rows, 7, 14)
+  if (endingSoon.length === 0 && newlySafe.length === 0) return null
+  return (
+    <div className="card border-r-4 border-r-amber-400">
+      <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
+        <Calendar size={16} className="text-amber-600" /> אחריות השמות
+      </h3>
+      {endingSoon.length > 0 && (
+        <div className="mb-3">
+          <p className="text-xs font-semibold text-red-700 mb-2">מסתיימת ב-7 הימים הקרובים</p>
+          <div className="flex flex-col gap-2">
+            {endingSoon.slice(0, 6).map(row => (
+              <div key={row.candidate.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-slate-800 truncate">{row.candidate.name}</span>
+                <GuaranteeBadge candidate={row.candidate} positions={positions} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {newlySafe.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-green-700 mb-2">הפכו לבטוחים — אפשר לחייב</p>
+          <div className="flex flex-col gap-2">
+            {newlySafe.slice(0, 6).map(row => (
+              <div key={row.candidate.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-slate-800 truncate">{row.candidate.name}</span>
+                <GuaranteeBadge candidate={row.candidate} positions={positions} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DailyView({ report, pipeline, tasks, candidates, positions, onNav }: {
   report:     DailyReport | null
   pipeline:   PipelineCompany[]
   tasks:      Task[]
   candidates: Candidate[]
+  positions:  SavedPosition[]
   onNav:      (v: 'tasks' | 'pipeline' | 'candidates') => void
 }) {
   const activePipeline = pipeline.filter(c => c.stage !== 'lost' && c.stage !== 'signed')
@@ -296,6 +338,8 @@ function DailyView({ report, pipeline, tasks, candidates, onNav }: {
           </button>
         )
       })()}
+
+      <GuaranteeWatch candidates={candidates} positions={positions} />
 
       {report ? (
         <>

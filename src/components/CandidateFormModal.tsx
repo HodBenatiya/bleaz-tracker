@@ -9,7 +9,9 @@ import { loadCampaignChoices, loadCampaignPositionMaps, loadKnownAds, type Campa
 import type { Candidate, CandidateStatus, NonaStatus, SavedPosition, WaMessage } from '../types'
 import { CANDIDATE_STATUS_LABELS } from '../types'
 import { shouldApplyNoteDraft, withMyUpdateCue } from '../utils/noteDraft'
+import { guaranteeDaysForPlacement, isPlacedStatus, placementGuarantee, placementPosition } from '../utils/guarantee'
 import AttributionMonthField from './AttributionMonthField'
+import GuaranteeBadge from './GuaranteeBadge'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
   { value: '', label: 'לא הוגדר', color: 'bg-slate-100 text-slate-500' },
@@ -453,8 +455,9 @@ export default function CandidateFormModal({ initial, editing, positions, onClos
           )}
 
           {/* Invoice status — only for placed candidates */}
-          {(form.status === 'started_working' || form.status === 'placement_complete') && (
+          {isPlacedStatus(form.status) && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <PlacementGuaranteeNote form={form} positions={positions} />
               <p className="text-xs font-bold text-emerald-700 mb-2 uppercase tracking-wide">גבייה — ₪5,000</p>
               <div className="flex gap-2">
                 {(['none', 'sent', 'paid'] as const).map(s => (
@@ -580,6 +583,23 @@ function SourcePicker({ form, choices, picking, query, suggestion, autoPicked, o
           </ul>
         </div>
       )}
+    </div>
+  )
+}
+
+function PlacementGuaranteeNote({ form, positions }: { form: Candidate; positions: SavedPosition[] }) {
+  const days = guaranteeDaysForPlacement(form, positions)
+  const guarantee = placementGuarantee(form, positions)
+  const position = placementPosition(form, positions)
+  return (
+    <div className="mb-3 text-xs text-emerald-900">
+      <p className="font-semibold mb-1">
+        ימי אחריות: {days}{position ? ` · ${position.companyName}` : ' (ברירת מחדל, אין משרה משויכת)'}
+      </p>
+      {guarantee.endDate
+        ? <GuaranteeBadge candidate={form} positions={positions} />
+        : <p className="text-emerald-700/80">תאריך הסיום יופיע אחרי שממלאים תאריך התחלה.</p>}
+      <p className="text-[11px] text-emerald-700/70 mt-1">נקבע במשרה. שינוי שם מחשב מחדש את תאריך הסיום, בלי לשמור תאריך ישן על המועמד.</p>
     </div>
   )
 }

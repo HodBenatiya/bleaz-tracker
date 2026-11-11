@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { ChevronRight, ChevronLeft } from 'lucide-react'
 import { Candidate, SavedPosition, CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
+import { isGuaranteePlacement, positionGuaranteeDays } from '../utils/guarantee'
+import GuaranteeBadge from './GuaranteeBadge'
 import MatchCandidatesButton from './MatchCandidatesPanel'
 
 interface Props {
@@ -209,6 +211,7 @@ export default function Board({ positions, candidates }: Props) {
                       {pos.city && (
                         <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{pos.city}</span>
                       )}
+                      <span className="text-xs bg-amber-50 text-amber-800 px-2 py-0.5 rounded-full">{positionGuaranteeDays(pos)} ימי אחריות</span>
                     </div>
                     <div className="text-xs text-gray-400 mt-1">
                       נפתחה {fmtDate(pos.createdAt)}
@@ -292,6 +295,12 @@ export default function Board({ positions, candidates }: Props) {
                                 <div className="flex items-center gap-2 shrink-0">
                                   {c.interviewDate && (
                                     <span className="text-xs text-gray-400">📅 {fmtDate(c.interviewDate)}</span>
+                                  )}
+                                  {isGuaranteePlacement(c) && (
+                                    <GuaranteeBadge
+                                      candidate={{ ...c, savedPositionId: pos.id, savedPositionIds: [pos.id] }}
+                                      positions={[pos]}
+                                    />
                                   )}
                                   <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${CANDIDATE_STATUS_COLORS[c.status]}`}>
                                     {CANDIDATE_STATUS_LABELS[c.status]}
