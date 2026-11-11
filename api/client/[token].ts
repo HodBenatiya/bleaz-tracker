@@ -1,4 +1,5 @@
 import { db } from '../_db.js'
+import { placementGuarantee, positionGuaranteeDays } from '../../src/utils/guarantee.js'
 
 const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
@@ -22,6 +23,16 @@ function fmtDate(d: string) {
   return new Date(d + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'long' })
 }
 
+function guaranteeLine(candidate: { status?: string; startDate?: string }, positionId: string, guaranteeDays: unknown) {
+  if (candidate.status !== 'started_working' && candidate.status !== 'placement_complete') return ''
+  if (!candidate.startDate) return ''
+  const end = placementGuarantee(
+    { startDate: candidate.startDate, savedPositionId: positionId, savedPositionIds: [positionId] },
+    [{ id: positionId, guaranteeDays }],
+  ).endDate
+  return end ? `<div class="cand-sub">🛡️ אחריות עד: ${fmtDate(end)}</div>` : ''
+}
+
 function fmtUpdated() {
   return new Date().toLocaleString('he-IL', {
     timeZone: 'Asia/Jerusalem',
@@ -43,6 +54,7 @@ export default async function handler(req: any, res: any) {
   if (!posRow) return res.status(404).send(errorPage('הדף לא נמצא'))
 
   const pos = posRow.data as any
+  const guaranteeDays = positionGuaranteeDays(pos)
 
   // ── מצא מועמדים רלוונטיים ──
   const { data: candidateRows } = await supabase.from('candidates').select('id, data')
@@ -73,6 +85,7 @@ export default async function handler(req: any, res: any) {
           <div class="cand-name">${c.name}</div>
           ${c.interviewDate ? `<div class="cand-sub">📅 ראיון: ${fmtDate(c.interviewDate)}${c.interviewTime ? ` · ${c.interviewTime}` : ''}</div>` : ''}
           ${c.startDate ? `<div class="cand-sub">✅ התחלה: ${fmtDate(c.startDate)}</div>` : ''}
+          ${guaranteeLine(c, posRow.id, pos.guaranteeDays)}
         </div>
         <span class="badge" style="${STATUS_STYLE[c.status] ?? ''}">${STATUS_LABEL[c.status] ?? c.status}</span>
       </div>
@@ -144,7 +157,7 @@ export default async function handler(req: any, res: any) {
 <div class="header">
   <div class="brand"><b>BLEAZ</b> · סטטוס מועמדים</div>
   <div class="company">${pos.companyName}</div>
-  ${pos.positionTitle ? `<div class="position">${pos.positionTitle}${pos.city ? ` · ${pos.city}` : ''}</div>` : ''}
+  <div class="position">${pos.positionTitle ? `${pos.positionTitle}${pos.city ? ` · ${pos.city}` : ''} · ` : ''}אחריות ${guaranteeDays} יום</div>
 </div>
 
 <div class="content">

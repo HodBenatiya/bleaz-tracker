@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, ChevronDown, ChevronUp, Phone, ExternalLink, Hash, Link2, Check, Search } from 'lucide-react'
 import type { SavedPosition, Candidate, CandidateStatus } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import { generateId, formatCurrency, calcCostPerLead } from '../utils/helpers'
+import { isGuaranteePlacement, placementGuarantee, positionGuaranteeDays, readGuaranteeDays } from '../utils/guarantee'
+import GuaranteeBadge from './GuaranteeBadge'
 import MatchCandidatesButton from './MatchCandidatesPanel'
 
 interface Props {
@@ -19,6 +21,7 @@ const ALL_STATUSES: CandidateStatus[] = [
 
 const EMPTY: Omit<SavedPosition, 'id' | 'createdAt' | 'isActive' | 'funnelSentToClient' | 'funnelInterviews' | 'funnelAccepted' | 'funnelConfirmed'> = {
   companyName: '', positionTitle: '', city: '', description: '', positionNumber: '', positionUrl: '', salary: undefined,
+  guaranteeDays: undefined,
 }
 
 function numField(label: string, value: number, onChange: (v: number) => void, sub?: string) {
@@ -71,22 +74,38 @@ export default function PositionsManager({ positions, reports, candidates, onCha
   }
 
   function startEdit(pos: SavedPosition) {
-    setForm({ companyName: pos.companyName, positionTitle: pos.positionTitle, city: pos.city, description: pos.description ?? '', positionNumber: pos.positionNumber ?? '', positionUrl: pos.positionUrl ?? '', salary: pos.salary })
+    setForm({
+      companyName: pos.companyName,
+      positionTitle: pos.positionTitle,
+      city: pos.city,
+      description: pos.description ?? '',
+      positionNumber: pos.positionNumber ?? '',
+      positionUrl: pos.positionUrl ?? '',
+      salary: pos.salary,
+      guaranteeDays: readGuaranteeDays(pos.guaranteeDays),
+    })
     setEditingId(pos.id)
     setIsAdding(false)
+  }
+
+  function withGuarantee(base: SavedPosition, days: number | undefined): SavedPosition {
+    const next = { ...base }
+    if (days == null) delete next.guaranteeDays
+    else next.guaranteeDays = days
+    return next
   }
 
   function cancelEdit() { setEditingId(null); setIsAdding(false) }
 
   function handleSaveNew() {
     if (!form.companyName.trim()) return
-    const newPos: SavedPosition = {
+    const newPos = withGuarantee({
       id: generateId(), ...form,
       isActive: true,
       createdAt: new Date().toISOString(),
       funnelSentToClient: 0, funnelInterviews: 0,
       funnelAccepted: 0, funnelConfirmed: 0,
-    }
+    }, form.guaranteeDays)
     onChange([...positions, newPos])
     setIsAdding(false)
     setForm({ ...EMPTY })
@@ -95,9 +114,13 @@ export default function PositionsManager({ positions, reports, candidates, onCha
 
   function handleSaveEdit() {
     if (!form.companyName.trim()) return
-    onChange(positions.map(p => p.id === editingId ? { ...p, ...form } : p))
+    onChange(positions.map(p => p.id === editingId ? withGuarantee({ ...p, ...form }, form.guaranteeDays) : p))
     setEditingId(null)
     flash()
+  }
+
+  function updateGuarantee(id: string, days: number | undefined) {
+    onChange(positions.map(p => p.id === id ? withGuarantee(p, days) : p))
   }
 
   function updateFunnel(id: string, field: keyof Pick<SavedPosition, 'funnelSentToClient' | 'funnelInterviews' | 'funnelAccepted' | 'funnelConfirmed'>, value: number) {
@@ -214,7 +237,9 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                         </a>
                       )}
                     </div>
-                    <p className="text-xs text-slate-500">{pos.positionTitle}{pos.city ? ` · ${pos.city}` : ''}</p>
+                    <p className="text-xs text-slate-500">
+                      {[pos.positionTitle, pos.city, `${positionGuaranteeDays(pos)} ימי אחריות`].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
                   <div className="flex items-center gap-3">
                     {/* Quick stats */}
@@ -307,6 +332,12 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                                                 ✅ {new Date(c.startDate + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}
                                               </span>
                                             )}
+                                            {isGuaranteePlacement(c) && (
+                                              <GuaranteeBadge
+                                                candidate={{ ...c, savedPositionId: pos.id, savedPositionIds: [pos.id] }}
+                                                positions={positions}
+                                              />
+                                            )}
                                             <a href={`tel:${c.phone}`} className="flex items-center gap-0.5 text-brand-600 hover:underline font-mono">
                                               <Phone size={11} />{c.phone}
                                             </a>
@@ -353,6 +384,15 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                               </p>
                             </div>
                           </div>
+                        </div>
+
+                        {/* Guarantee length — edits recompute every placed candidate on this job */}
+                        <div className="mb-4 max-w-xs">
+                          <GuaranteeDaysField
+                            stored={readGuaranteeDays(pos.guaranteeDays)}
+                            onCommit={days => updateGuarantee(pos.id, days)}
+                          />
+                          <GuaranteeTally candidates={candidates} position={pos} />
                         </div>
 
                         {/* Funnel — manual update */}
@@ -479,7 +519,7 @@ function PositionForm({ form, onChange, onSave, onCancel, title }: FormProps) {
             value={form.city} onChange={e => onChange({ ...form, city: e.target.value })} />
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
         <div>
           <label className="label">מספר משרה</label>
           <input type="text" className="input-field font-mono" placeholder="לדוגמה: 4521"
@@ -497,6 +537,29 @@ function PositionForm({ form, onChange, onSave, onCancel, title }: FormProps) {
           <input type="number" min={0} step={500} className="input-field" placeholder="לדוגמה: 8000"
             value={form.salary ?? ''}
             onChange={e => onChange({ ...form, salary: e.target.value ? Number(e.target.value) : undefined })} />
+        </div>
+        <div>
+          <label className="label">ימי אחריות</label>
+          <input
+            type="number"
+            min={1}
+            max={3650}
+            step={1}
+            className="input-field"
+            placeholder="30"
+            value={form.guaranteeDays ?? ''}
+            onChange={e => {
+              const raw = e.target.value.trim()
+              if (raw === '') {
+                onChange({ ...form, guaranteeDays: undefined })
+                return
+              }
+              const n = Number(raw)
+              if (!Number.isFinite(n)) return
+              onChange({ ...form, guaranteeDays: Math.min(3650, Math.max(1, Math.round(n))) })
+            }}
+          />
+          <p className="text-[10px] text-slate-400 mt-1">ריק = 30 יום. שינוי מחשב מחדש את סיום האחריות של מי שהושם למשרה.</p>
         </div>
       </div>
       <div className="mb-4">
@@ -516,5 +579,61 @@ function PositionForm({ form, onChange, onSave, onCancel, title }: FormProps) {
         <button onClick={onCancel} className="btn-secondary"><X size={15} /> ביטול</button>
       </div>
     </div>
+  )
+}
+
+function GuaranteeDaysField({ stored, onCommit }: { stored: number | undefined; onCommit: (days: number | undefined) => void }) {
+  const [text, setText] = useState(stored == null ? '' : String(stored))
+  useEffect(() => { setText(stored == null ? '' : String(stored)) }, [stored])
+
+  function commit() {
+    const raw = text.trim()
+    if (raw === '') {
+      if (stored != null) onCommit(undefined)
+      return
+    }
+    const parsed = readGuaranteeDays(raw)
+    if (parsed == null) {
+      setText(stored == null ? '' : String(stored))
+      return
+    }
+    setText(String(parsed))
+    if (parsed !== stored) onCommit(parsed)
+  }
+
+  return (
+    <div onClick={e => e.stopPropagation()}>
+      <label className="label text-xs">ימי אחריות</label>
+      <p className="text-[10px] text-slate-400 mb-1">ריק = 30. חל על כל מי שהושם למשרה הזו</p>
+      <input
+        type="number"
+        min={1}
+        max={3650}
+        inputMode="numeric"
+        className="input-field text-sm"
+        placeholder="30"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      />
+    </div>
+  )
+}
+
+function GuaranteeTally({ candidates, position }: { candidates: Candidate[]; position: SavedPosition }) {
+  const linked = candidates.filter(c =>
+    isGuaranteePlacement(c) && (c.savedPositionId === position.id || (c.savedPositionIds?.includes(position.id) ?? false))
+  )
+  if (linked.length === 0) return null
+  const snaps = linked.map(c => placementGuarantee(
+    { ...c, savedPositionId: position.id, savedPositionIds: [position.id] },
+    [position],
+  ))
+  const safe = snaps.filter(item => item.safe).length
+  return (
+    <p className="text-[11px] text-slate-500 mt-1">
+      לפי תאריך התחלה: {safe} בטוחים · {snaps.length - safe} באחריות. המונה "עברו אחריות" נשאר ידני.
+    </p>
   )
 }

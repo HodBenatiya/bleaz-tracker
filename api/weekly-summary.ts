@@ -1,5 +1,6 @@
 import { sendNotify } from './_provider.js'
 import { db } from './_db.js'
+import { calendarToday, guaranteeAlertLines, watchPlacements } from '../src/utils/guarantee.js'
 
 const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
@@ -49,7 +50,7 @@ export default async function handler(req: any, res: any) {
   ])
 
   const candidates = (candidateRows ?? []).map((r: any) => r.data)
-  const positions  = (posRows ?? []).map((r: any) => r.data)
+  const positions  = (posRows ?? []).map((r: any) => ({ ...(r.data ?? {}), id: r.data?.id || r.id }))
   const tasks      = (taskRows ?? []).map((r: any) => r.data)
 
   // ── סטטיסטיקות שבועיות ──
@@ -117,6 +118,14 @@ export default async function handler(req: any, res: any) {
     if (interviewsThisWeek.length > 5) {
       lines.push(`  ועוד ${interviewsThisWeek.length - 5}...`)
     }
+  }
+
+  const guaranteeLines = guaranteeAlertLines(
+    watchPlacements(candidates, positions, calendarToday(new Date(), 'Asia/Jerusalem')),
+  )
+  if (guaranteeLines.length > 0) {
+    lines.push(``)
+    lines.push(...guaranteeLines)
   }
 
   const msg = lines.join('\n')

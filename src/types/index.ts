@@ -11,6 +11,11 @@ export interface SavedPosition {
   positionUrl?: string    // לינק למשרה במערכת הפנימית
   clientToken?: string    // טוקן גישה ללינק ציבורי ללקוח
   salary?: number         // שכר גולמי חודשי (ממנו נגזרת עמלת ההשמה)
+  /**
+   * ימי אחריות לחוזה של המשרה. חסר, ריק או לא תקין = 30.
+   * תאריך סיום האחריות לא נשמר — הוא מחושב בכל פעם מתאריך ההתחלה של המועמד.
+   */
+  guaranteeDays?: number
   isActive: boolean
   createdAt: string
 

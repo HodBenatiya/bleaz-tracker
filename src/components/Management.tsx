@@ -3,7 +3,9 @@ import { ChevronRight, ChevronLeft, ChevronDown, Edit2, Check, X, TrendingUp, Do
 import type { Candidate, SavedPosition, DailyReport } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
 import { candidateAnchor, placementAttribution, placementInMonth } from '../utils/candidateAnchor'
+import { placementGuarantee } from '../utils/guarantee'
 import AttributionMonthField from './AttributionMonthField'
+import GuaranteeBadge from './GuaranteeBadge'
 
 const PLACEMENT_FEE = 5000
 
@@ -12,23 +14,6 @@ interface Props {
   positions:          SavedPosition[]
   reports:            DailyReport[]
   onCandidatesChange: (updated: Candidate[]) => void
-}
-
-// ── Warranty ──────────────────────────────────────────────────────────────────
-
-function warrantyDays(c: Candidate, positions: SavedPosition[]): number {
-  const ids = c.savedPositionIds?.length
-    ? c.savedPositionIds
-    : c.savedPositionId ? [c.savedPositionId] : []
-  const pos = ids.map(id => positions.find(p => p.id === id)).find(Boolean)
-  return (pos?.companyName ?? '').toUpperCase().includes('BINGO') ? 45 : 30
-}
-
-function warrantyEnd(c: Candidate, positions: SavedPosition[]): Date | null {
-  if (!c.startDate) return null
-  const d = new Date(c.startDate + 'T12:00:00')
-  d.setDate(d.getDate() + warrantyDays(c, positions))
-  return d
 }
 
 // ── Month helpers ─────────────────────────────────────────────────────────────
@@ -316,6 +301,11 @@ export default function Management({ candidates, positions, reports, onCandidate
                           {candidateAnchor(c).day ? ` · נוצר ${fmtDate(candidateAnchor(c).day)}` : ''}
                           {c.startDate ? ` · התחיל ${fmtDate(c.startDate)}` : ''}
                         </div>
+                        {(c.status === 'started_working' || c.status === 'placement_complete') && c.startDate && (
+                          <div className="mt-1">
+                            <GuaranteeBadge candidate={c} positions={positions} />
+                          </div>
+                        )}
                         <div className="mt-1">
                           <AttributionMonthField
                             candidate={c}
@@ -617,6 +607,17 @@ export default function Management({ candidates, positions, reports, onCandidate
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="font-bold text-slate-800">גבייה ואחריות</h3>
           <div className="flex items-center gap-3 text-xs text-slate-500">
+            {(() => {
+              const snaps = allPlaced.map(c => placementGuarantee(c, positions))
+              const safe = snaps.filter(item => item.safe).length
+              const open = snaps.filter(item => item.daysLeft != null && !item.safe).length
+              return (
+                <>
+                  {open > 0 && <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{open} באחריות</span>}
+                  {safe > 0 && <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{safe} בטוח</span>}
+                </>
+              )
+            })()}
             {invoiceCounts['none'] > 0 && (
               <span className="bg-slate-100 px-2 py-0.5 rounded-full">{invoiceCounts['none']} לא נשלחה</span>
             )}
@@ -649,11 +650,7 @@ export default function Management({ candidates, positions, reports, onCandidate
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {allPlaced.map(c => {
-                  const wDays   = warrantyDays(c, positions)
-                  const wEnd    = warrantyEnd(c, positions)
-                  const today   = new Date()
-                  const expired = wEnd ? wEnd < today : false
-                  const daysLeft = wEnd ? Math.ceil((wEnd.getTime() - today.getTime()) / 86400000) : null
+                  const guarantee = placementGuarantee(c, positions)
                   const company  = candidateCompany(c, positions)
                   const inv      = c.invoiceStatus ?? 'none'
 
@@ -663,16 +660,7 @@ export default function Management({ candidates, positions, reports, onCandidate
                       <td className="px-4 py-3 text-slate-600">{company}</td>
                       <td className="px-4 py-3 text-slate-500 text-xs">{c.startDate ? fmtDate(c.startDate) : '—'}</td>
                       <td className="px-4 py-3">
-                        {wEnd === null ? (
-                          <span className="text-slate-400 text-xs">—</span>
-                        ) : expired ? (
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ פגה</span>
-                        ) : (
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${daysLeft != null && daysLeft <= 7 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {daysLeft != null && daysLeft <= 0 ? 'פגה היום' : `${daysLeft} ימים`}
-                            <span className="opacity-60 mr-1">({wDays})</span>
-                          </span>
-                        )}
+                        <GuaranteeBadge candidate={c} positions={positions} />
                       </td>
                       <td className="px-4 py-3 text-xs font-semibold text-slate-700">
                         ₪{fmtNum(PLACEMENT_FEE)}
@@ -688,6 +676,12 @@ export default function Management({ candidates, positions, reports, onCandidate
                         </div>
                         {c.paidDate && inv === 'paid' && (
                           <div className="text-[10px] text-slate-400 mt-0.5">שולם: {fmtDate(c.paidDate)}</div>
+                        )}
+                        {guarantee.safe && inv !== 'paid' && (
+                          <div className="text-[10px] text-green-700 mt-0.5">האחריות הסתיימה — אפשר לחייב</div>
+                        )}
+                        {!guarantee.safe && guarantee.endDate && inv === 'none' && (
+                          <div className="text-[10px] text-slate-400 mt-0.5">לחיוב אחרי {fmtDate(guarantee.endDate)}</div>
                         )}
                       </td>
                     </tr>

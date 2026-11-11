@@ -3,9 +3,11 @@ import { Plus, Phone, X, Trash2, Edit2, Search, Calendar, MapPin, Briefcase, Use
 import * as XLSX from 'xlsx'
 import CandidateFormModal from './CandidateFormModal'
 import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
+import { isPlacedStatus, placementGuarantee } from '../utils/guarantee'
 import type { Candidate, CandidateStatus, CandidateNote, NonaStatus, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import AttributionMonthField from './AttributionMonthField'
+import GuaranteeBadge from './GuaranteeBadge'
 import { signedStorageUrl } from '../utils/storageUrl'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
@@ -210,6 +212,8 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
       'מקור':         c.source,
       'תאריך ראיון':  c.interviewDate ?? '',
       'תאריך התחלה':  c.startDate ?? '',
+      'ימי אחריות':   isPlacedStatus(c.status) ? placementGuarantee(c, positions).days : '',
+      'סיום אחריות':  isPlacedStatus(c.status) ? (placementGuarantee(c, positions).endDate ?? '') : '',
       'נונה':         c.nonaStatus,
       'הערות':        c.notes,
       'תאריך כניסה':  c.createdAt.split('T')[0],
@@ -495,6 +499,11 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                           )}
                           {c.status === 'started_working' && c.startDate && (
                             <div className="text-xs text-emerald-500 mt-0.5">✅ {formatDateHe(c.startDate)}</div>
+                          )}
+                          {isPlacedStatus(c.status) && c.startDate && (
+                            <div className="mt-0.5">
+                              <GuaranteeBadge candidate={c} positions={positions} />
+                            </div>
                           )}
                           {(c.status === 'started_working' || c.status === 'placement_complete') && (
                             <div className="mt-1">
@@ -877,6 +886,9 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                       <span className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full">
                         <Calendar size={10} />התחיל {formatDateHe(viewing.startDate)}
                       </span>
+                    )}
+                    {isPlacedStatus(viewing.status) && (
+                      <GuaranteeBadge candidate={viewing} positions={positions} />
                     )}
                     {viewing.nonaStatus && (() => {
                       const ns = NONA_STATUSES.find(s => s.value === viewing.nonaStatus)
