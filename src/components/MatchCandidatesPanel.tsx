@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Loader2, Search, X } from 'lucide-react'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS, type CandidateStatus } from '../types'
+import { useCanEdit } from '../access/AccessContext'
 import { authFetch } from '../utils/authFetch'
 
 interface MatchRow {
@@ -45,6 +46,7 @@ function Highlight({ text, terms }: { text: string; terms: string[] }) {
 }
 
 export default function MatchCandidatesButton({ jobId }: { jobId: string }) {
+  const canEdit = useCanEdit()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -78,6 +80,8 @@ export default function MatchCandidatesButton({ jobId }: { jobId: string }) {
       setLoading(false)
     }
   }
+
+  if (!canEdit) return null
 
   return (
     <>

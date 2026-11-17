@@ -17,6 +17,7 @@ import {
   type AdsBundle,
   type PlacementSpend,
 } from '../utils/metaAdsStore'
+import { useCanEdit } from '../access/AccessContext'
 import { todayInIsrael } from '../utils/metaAds/zone'
 
 interface Props {
@@ -63,6 +64,8 @@ function syncLabel(iso: string): string {
 }
 
 export default function AdsAnalytics({ candidates, positions, start, end, rangeLabel, jobIds, example }: Props) {
+  const canEdit = useCanEdit()
+  const locked = example || !canEdit
   const [bundle, setBundle] = useState<AdsBundle | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(!example)
@@ -301,13 +304,14 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
             <input
               value={example ? '3.7' : rateText}
               onChange={event => setRateText(event.target.value)}
-              disabled={example}
+              disabled={locked}
+              readOnly={locked}
               inputMode="decimal"
               className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
               placeholder="3.70"
             />
             <span className="text-xs text-slate-600">שקל</span>
-            <button type="button" onClick={() => void saveRate()} disabled={example || busy} className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40">שמור</button>
+            {canEdit && <button type="button" onClick={() => void saveRate()} disabled={example || busy} className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40">שמור</button>}
           </div>
         </div>
         {notice && <p className="text-xs text-slate-600">{notice}</p>}
@@ -363,7 +367,7 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {mapped.length === 0 && <span className="text-xs text-amber-700">לא משויך</span>}
-                    {mapped.map(row => (
+                    {mapped.map(row => canEdit ? (
                       <button
                         key={row.positionId}
                         type="button"
@@ -373,9 +377,13 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
                       >
                         {jobs.find(job => job.id === row.positionId)?.positionTitle || row.positionId} · הסר
                       </button>
+                    ) : (
+                      <span key={row.positionId} className="text-xs rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                        {jobs.find(job => job.id === row.positionId)?.positionTitle || row.positionId}
+                      </span>
                     ))}
                   </div>
-                  {suggestions.length > 0 && (
+                  {canEdit && suggestions.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {suggestions.map(item => {
                         const job = jobs.find(position => position.id === item.positionId)
@@ -395,7 +403,7 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
                       })}
                     </div>
                   )}
-                  <div className="flex gap-2">
+                  {canEdit && <div className="flex gap-2">
                     <select
                       value={addJob[key] || ''}
                       onChange={event => setAddJob(prev => ({ ...prev, [key]: event.target.value }))}
@@ -414,7 +422,7 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
                     >
                       שייך
                     </button>
-                  </div>
+                  </div>}
                 </div>
               )
             })}

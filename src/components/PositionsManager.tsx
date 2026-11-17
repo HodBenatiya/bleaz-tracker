@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Edit2, Trash2, CheckCircle2, ToggleLeft, ToggleRight, Save, X, ChevronDown, ChevronUp, Phone, ExternalLink, Hash, Link2, Check, Search } from 'lucide-react'
 import type { SavedPosition, Candidate, CandidateStatus } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
+import { useCanEdit } from '../access/AccessContext'
 import { generateId, formatCurrency, calcCostPerLead } from '../utils/helpers'
 import { isGuaranteePlacement, placementGuarantee, positionGuaranteeDays, readGuaranteeDays } from '../utils/guarantee'
 import GuaranteeBadge from './GuaranteeBadge'
@@ -37,6 +38,7 @@ function numField(label: string, value: number, onChange: (v: number) => void, s
 }
 
 export default function PositionsManager({ positions, reports, candidates, onChange }: Props) {
+  const canEdit = useCanEdit()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isAdding,  setIsAdding]  = useState(false)
   const [form,      setForm]      = useState({ ...EMPTY })
@@ -159,7 +161,7 @@ export default function PositionsManager({ positions, reports, candidates, onCha
             עדכן את הפאנל לכל משרה כשמשהו קורה — ללא תלות בתאריך ספציפי
           </p>
         </div>
-        <button onClick={startAdd} className="btn-primary"><Plus size={16} /> הוסף משרה</button>
+        {canEdit && <button onClick={startAdd} className="btn-primary"><Plus size={16} /> הוסף משרה</button>}
       </div>
 
       {saved && (
@@ -256,28 +258,31 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                     </div>
                     <div className="flex items-center gap-1">
                       <MatchCandidatesButton jobId={pos.id} />
-                      {/* לינק ללקוח */}
-                      <button
-                        onClick={e => handleCopyLink(e, pos)}
-                        title="העתק לינק ללקוח"
-                        className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition
-                          ${copiedId === pos.id
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-slate-100 text-slate-500 hover:bg-indigo-100 hover:text-indigo-700'}`}
-                      >
-                        {copiedId === pos.id
-                          ? <><Check size={12} /> הועתק!</>
-                          : <><Link2 size={12} /> לינק ללקוח</>}
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); toggleActive(pos.id) }} className="p-1 text-slate-400 hover:text-brand-600 transition">
-                        {pos.isActive ? <ToggleRight size={20} className="text-brand-600" /> : <ToggleLeft size={20} />}
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); startEdit(pos) }} className="p-1 text-slate-400 hover:text-slate-700 transition">
-                        <Edit2 size={14} />
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); remove(pos.id) }} className="p-1 text-slate-400 hover:text-red-500 transition">
-                        <Trash2 size={14} />
-                      </button>
+                      {canEdit && (
+                        <>
+                          <button
+                            onClick={e => handleCopyLink(e, pos)}
+                            title="העתק לינק ללקוח"
+                            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition
+                              ${copiedId === pos.id
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-slate-100 text-slate-500 hover:bg-indigo-100 hover:text-indigo-700'}`}
+                          >
+                            {copiedId === pos.id
+                              ? <><Check size={12} /> הועתק!</>
+                              : <><Link2 size={12} /> לינק ללקוח</>}
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); toggleActive(pos.id) }} className="p-1 text-slate-400 hover:text-brand-600 transition">
+                            {pos.isActive ? <ToggleRight size={20} className="text-brand-600" /> : <ToggleLeft size={20} />}
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); startEdit(pos) }} className="p-1 text-slate-400 hover:text-slate-700 transition">
+                            <Edit2 size={14} />
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); remove(pos.id) }} className="p-1 text-slate-400 hover:text-red-500 transition">
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
                     </div>
                     {isOpen ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                   </div>
@@ -386,20 +391,24 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                           </div>
                         </div>
 
-                        {/* Guarantee length — edits recompute every placed candidate on this job */}
                         <div className="mb-4 max-w-xs">
-                          <GuaranteeDaysField
-                            stored={readGuaranteeDays(pos.guaranteeDays)}
-                            onCommit={days => updateGuarantee(pos.id, days)}
-                          />
+                          {canEdit && (
+                            <GuaranteeDaysField
+                              stored={readGuaranteeDays(pos.guaranteeDays)}
+                              onCommit={days => updateGuarantee(pos.id, days)}
+                            />
+                          )}
+                          {!canEdit && (
+                            <p className="text-xs text-slate-500 mb-2">{positionGuaranteeDays(pos)} ימי אחריות</p>
+                          )}
                           <GuaranteeTally candidates={candidates} position={pos} />
                         </div>
 
-                        {/* Funnel — manual update */}
                         <div>
                           <p className="text-xs font-semibold text-slate-500 mb-2">
-                            פאנל מועמדים — עדכן כשמשהו קורה בפועל
+                            {canEdit ? 'פאנל מועמדים — עדכן כשמשהו קורה בפועל' : 'פאנל מועמדים'}
                           </p>
+                          {canEdit && (
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                             {numField('נשלחו ללקוח', pos.funnelSentToClient,
                               v => updateFunnel(pos.id, 'funnelSentToClient', v),
@@ -414,6 +423,7 @@ export default function PositionsManager({ positions, reports, candidates, onCha
                               v => updateFunnel(pos.id, 'funnelConfirmed', v),
                               'הכנסה מאושרת')}
                           </div>
+                          )}
 
                           {/* Funnel visualization */}
                           {stats.leads > 0 && (

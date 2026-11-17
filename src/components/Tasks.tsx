@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Plus, Trash2, CheckCircle2, Circle, AlertCircle, Clock, ChevronDown } from 'lucide-react'
+import { useCanEdit } from '../access/AccessContext'
 import type { Task, TaskPriority } from '../types'
 import { TASK_PRIORITY_LABELS } from '../types'
 import { generateId, todayISO, formatDateHe } from '../utils/helpers'
@@ -22,6 +23,7 @@ const EMPTY = {
 }
 
 export default function Tasks({ tasks, onChange }: Props) {
+  const canEdit = useCanEdit()
   const [isAdding, setIsAdding] = useState(false)
   const [form,     setForm]     = useState({ ...EMPTY })
   const [filter,   setFilter]   = useState<'open' | 'done' | 'all'>('open')
@@ -73,9 +75,11 @@ export default function Tasks({ tasks, onChange }: Props) {
             {overdueCount > 0 && <span className="text-red-600 font-semibold mr-1"> · {overdueCount} באיחור</span>}
           </p>
         </div>
-        <button onClick={() => { setIsAdding(true); setForm({ ...EMPTY }) }} className="btn-primary">
-          <Plus size={16} /> הוסף משימה
-        </button>
+        {canEdit && (
+          <button onClick={() => { setIsAdding(true); setForm({ ...EMPTY }) }} className="btn-primary">
+            <Plus size={16} /> הוסף משימה
+          </button>
+        )}
       </div>
 
       {/* Add form */}
@@ -172,11 +176,19 @@ export default function Tasks({ tasks, onChange }: Props) {
                 }`}
               >
                 <div className="flex items-center gap-3 p-4">
-                  <button onClick={() => toggle(task.id)} className="shrink-0 text-slate-400 hover:text-brand-600 transition">
-                    {task.done
-                      ? <CheckCircle2 size={22} className="text-emerald-500" />
-                      : <Circle size={22} />}
-                  </button>
+                  {canEdit ? (
+                    <button onClick={() => toggle(task.id)} className="shrink-0 text-slate-400 hover:text-brand-600 transition">
+                      {task.done
+                        ? <CheckCircle2 size={22} className="text-emerald-500" />
+                        : <Circle size={22} />}
+                    </button>
+                  ) : (
+                    <span className="shrink-0 text-slate-400">
+                      {task.done
+                        ? <CheckCircle2 size={22} className="text-emerald-500" />
+                        : <Circle size={22} />}
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className={`font-medium text-sm ${task.done ? 'line-through text-slate-400' : 'text-slate-800'}`}>
                       {task.title}
@@ -200,9 +212,11 @@ export default function Tasks({ tasks, onChange }: Props) {
                       </span>
                     </div>
                   </div>
-                  <button onClick={() => remove(task.id)} className="shrink-0 text-slate-300 hover:text-red-500 transition p-1">
-                    <Trash2 size={15} />
-                  </button>
+                  {canEdit && (
+                    <button onClick={() => remove(task.id)} className="shrink-0 text-slate-300 hover:text-red-500 transition p-1">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               </div>
             )

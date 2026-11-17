@@ -1,3 +1,4 @@
+import { useCanEdit } from '../access/AccessContext'
 import { placementAttribution, withAttributionMonth, type PlacementAttribution } from '../utils/candidateAnchor'
 import type { Candidate } from '../types'
 
@@ -11,8 +12,12 @@ export function automaticAttribution(candidate: Candidate): PlacementAttribution
 }
 
 export default function AttributionMonthField({ candidate, onPick }: Props) {
+  const canEdit = useCanEdit()
   const current = placementAttribution(candidate)
   const automatic = automaticAttribution(candidate)
+  if (!canEdit) {
+    return <span className="text-[11px] text-slate-500">חודש שיוך: {current.month || '—'}</span>
+  }
 
   const pick = (value: string) => {
     if (!value || value === automatic.month) onPick(withAttributionMonth(candidate, null))

@@ -6,6 +6,7 @@ import type { Candidate, SavedPosition } from '../types'
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import { isPlacedStatus } from '../utils/guarantee'
 import GuaranteeBadge from './GuaranteeBadge'
+import { useCanEdit } from '../access/AccessContext'
 import { loadCampaignNames } from '../utils/metaAdsStore'
 
 // PDF worker — resolve local file via Vite's asset URL handling
@@ -112,6 +113,7 @@ function parsePastedText(text: string): Record<string, string>[] {
 }
 
 export default function DataView({ candidates, positions, onChange }: Props) {
+  const canEdit = useCanEdit()
   const [query,      setQuery]      = useState('')
   const [dragging,   setDragging]   = useState(false)
   const [importRows, setImportRows] = useState<Record<string, string>[]>([])
@@ -272,7 +274,7 @@ export default function DataView({ candidates, positions, onChange }: Props) {
   return (
     <div className="space-y-5" dir="rtl">
 
-      {/* ── import zone ── */}
+      {canEdit && (
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
 
         {/* tabs */}
@@ -350,6 +352,7 @@ export default function DataView({ candidates, positions, onChange }: Props) {
           </div>
         )}
       </div>
+      )}
 
       {/* ── search bar ── */}
       <div className="flex items-center gap-3 flex-wrap">

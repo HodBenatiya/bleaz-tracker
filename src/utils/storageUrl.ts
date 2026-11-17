@@ -1,9 +1,11 @@
+import { isViewer } from './accessMode'
 import { supabase } from './supabase'
 import { downloadFileName, storageObjectPath } from './storageKey'
 
 export { storageObjectPath }
 
 export async function signedStorageUrl(url: string, downloadName?: string): Promise<string> {
+  if (isViewer()) throw new Error('צפייה בלבד — אין הורדת קבצים')
   const ref = storageObjectPath(url)
   if (!ref) return url
   const filename = downloadName ? downloadFileName(downloadName) : ''

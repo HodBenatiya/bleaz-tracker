@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Edit2, Trash2, Building2, Users } from 'lucide-react'
+import { useCanEdit } from '../access/AccessContext'
 import type { DailyReport } from '../types'
 import { CLIENT_STATUS_LABELS } from '../types'
 import { sortedReports, formatDateHe, formatCurrency, calcCostPerLead } from '../utils/helpers'
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function History({ reports, onEdit, onDelete }: Props) {
+  const canEdit = useCanEdit()
   const [expanded,      setExpanded]      = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
@@ -137,7 +139,7 @@ export default function History({ reports, onEdit, onDelete }: Props) {
                 {r.tzachiBlockers && <BlockRow label="צחי — חסמים" text={r.tzachiBlockers} />}
                 {r.generalNotes   && <BlockRow label="הערות כלליות" text={r.generalNotes} />}
 
-                {/* Actions */}
+                {canEdit && (
                 <div className="flex items-center gap-3 mt-4 pt-4 border-t border-slate-100">
                   <button className="btn-secondary text-sm !px-4 !py-2" onClick={() => onEdit(r)}>
                     <Edit2 size={14} /> ערוך
@@ -155,6 +157,7 @@ export default function History({ reports, onEdit, onDelete }: Props) {
                     </button>
                   )}
                 </div>
+                )}
               </div>
             )}
           </div>

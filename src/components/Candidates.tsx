@@ -8,6 +8,7 @@ import type { Candidate, CandidateStatus, CandidateNote, NonaStatus, SavedPositi
 import { CANDIDATE_STATUS_LABELS, CANDIDATE_STATUS_COLORS } from '../types'
 import AttributionMonthField from './AttributionMonthField'
 import GuaranteeBadge from './GuaranteeBadge'
+import { useCanEdit } from '../access/AccessContext'
 import { signedStorageUrl } from '../utils/storageUrl'
 
 const NONA_STATUSES: { value: NonaStatus; label: string; color: string }[] = [
@@ -96,6 +97,7 @@ function formatDateHe(iso: string): string {
 }
 
 export default function Candidates({ candidates, positions, onChange }: Props) {
+  const canEdit = useCanEdit()
   const [showForm,        setShowForm]       = useState(false)
   const [editing,         setEditing]        = useState<Candidate | null>(null)
   const [viewing,         setViewing]        = useState<Candidate | null>(null)
@@ -408,27 +410,31 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
           </button>
         </div>
 
-        <button
-          onClick={exportToExcel}
-          title="ייצוא לאקסל"
-          className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
-        >
-          <Download size={15} />
-          ייצוא
-        </button>
+        {canEdit && (
+          <>
+            <button
+              onClick={exportToExcel}
+              title="ייצוא לאקסל"
+              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+            >
+              <Download size={15} />
+              ייצוא
+            </button>
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
-        >
-          <Upload size={15} />
-          ייבוא
-        </button>
-        <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImportFile} />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+            >
+              <Upload size={15} />
+              ייבוא
+            </button>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImportFile} />
 
-        <button onClick={openNew} className="btn-primary flex items-center gap-1.5">
-          <Plus size={16} /> מועמד חדש
-        </button>
+            <button onClick={openNew} className="btn-primary flex items-center gap-1.5">
+              <Plus size={16} /> מועמד חדש
+            </button>
+          </>
+        )}
       </div>
 
       {/* ── list view ── */}
@@ -465,7 +471,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                     {/* Name — click opens edit drawer */}
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => openEdit(c)}
+                        onClick={() => canEdit ? openEdit(c) : setViewing(c)}
                         className="font-semibold text-slate-800 hover:text-brand-700 hover:underline text-right leading-tight"
                       >
                         {c.name}
@@ -511,7 +517,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                             </div>
                           )}
                         </div>
-                        <div className="relative">
+                        {canEdit && <div className="relative">
                           <button
                             onClick={e => { e.stopPropagation(); setOpenStatusMenu(openStatusMenu === c.id ? null : c.id) }}
                             className="p-1 text-slate-300 hover:text-slate-500 rounded hover:bg-slate-100 transition"
@@ -532,7 +538,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                               ))}
                             </div>
                           )}
-                        </div>
+                        </div>}
                       </div>
                     </td>
 
@@ -571,9 +577,11 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                     </td>
 
                     <td className="px-4 py-3">
-                      <button onClick={() => remove(c.id)} className="p-1 text-slate-300 hover:text-red-500 transition">
-                        <Trash2 size={14} />
-                      </button>
+                      {canEdit && (
+                        <button onClick={() => remove(c.id)} className="p-1 text-slate-300 hover:text-red-500 transition">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -637,7 +645,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-700">🟣 הקמת משתמש נונה</span>
-            <span className="text-xs text-slate-400">— עדכן סטטוס לכל מועמד</span>
+            {canEdit && <span className="text-xs text-slate-400">— עדכן סטטוס לכל מועמד</span>}
           </div>
 
           {/* summary chips */}
@@ -677,18 +685,22 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
-                      <select
-                        value={c.nonaStatus ?? ''}
-                        onChange={e => {
-                          const updated = { ...c, nonaStatus: e.target.value as NonaStatus, updatedAt: new Date().toISOString() }
-                          onChange(candidates.map(x => x.id === c.id ? updated : x))
-                        }}
-                        className={`text-xs font-semibold px-2.5 py-1 rounded-full border-0 cursor-pointer ${nonaOpt.color}`}
-                      >
-                        {NONA_STATUSES.map(s => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
-                        ))}
-                      </select>
+                      {canEdit ? (
+                        <select
+                          value={c.nonaStatus ?? ''}
+                          onChange={e => {
+                            const updated = { ...c, nonaStatus: e.target.value as NonaStatus, updatedAt: new Date().toISOString() }
+                            onChange(candidates.map(x => x.id === c.id ? updated : x))
+                          }}
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full border-0 cursor-pointer ${nonaOpt.color}`}
+                        >
+                          {NONA_STATUSES.map(s => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${nonaOpt.color}`}>{nonaOpt.label}</span>
+                      )}
                     </td>
                   </tr>
                 )
@@ -776,13 +788,14 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
         </div>
       )}
 
-      {/* ── floating add button (mobile) ── */}
-      <button
-        onClick={openNew}
-        className="fixed bottom-6 left-6 w-14 h-14 bg-brand-600 text-white rounded-full shadow-xl flex items-center justify-center hover:bg-brand-700 transition-colors sm:hidden z-40"
-      >
-        <Plus size={24} />
-      </button>
+      {canEdit && (
+        <button
+          onClick={openNew}
+          className="fixed bottom-6 left-6 w-14 h-14 bg-brand-600 text-white rounded-full shadow-xl flex items-center justify-center hover:bg-brand-700 transition-colors sm:hidden z-40"
+        >
+          <Plus size={24} />
+        </button>
+      )}
 
       {/* ── candidate detail modal ── */}
       {viewing && (() => {
@@ -826,9 +839,11 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   </span>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => { setViewing(null); openEdit(viewing) }} className="p-2 rounded-lg bg-white/15 text-white hover:bg-white/25">
-                    <Edit2 size={16} />
-                  </button>
+                  {canEdit && (
+                    <button onClick={() => { setViewing(null); openEdit(viewing) }} className="p-2 rounded-lg bg-white/15 text-white hover:bg-white/25">
+                      <Edit2 size={16} />
+                    </button>
+                  )}
                   <button onClick={() => setViewing(null)} className="p-2 rounded-lg bg-white/15 text-white hover:bg-white/25">
                     <X size={16} />
                   </button>
@@ -849,11 +864,16 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   )}
                   {viewing.source && <span className="flex items-center gap-1"><User size={11} className="text-slate-400" />{viewing.source}</span>}
                   {viewing.positionType && <span className="flex items-center gap-1"><Briefcase size={11} className="text-slate-400" />{viewing.positionType}</span>}
-                  {viewing.cvUrl && (
+                  {canEdit && viewing.cvUrl && (
                     <button type="button" title={viewing.cvFileName || 'קורות חיים'} onClick={() => { signedStorageUrl(viewing.cvUrl || '', viewing.cvFileName).then(url => window.open(url, '_blank', 'noopener')).catch(() => alert('לא הצלחנו לפתוח את הקובץ')) }}
                       className="flex items-center gap-1 text-brand-600 hover:text-brand-800 hover:underline font-medium">
                       <FileText size={11} /> {viewing.cvFileName || 'קורות חיים'} <ExternalLink size={10} />
                     </button>
+                  )}
+                  {!canEdit && viewing.cvFileName && (
+                    <span className="flex items-center gap-1 text-slate-500">
+                      <FileText size={11} /> {viewing.cvFileName}
+                    </span>
                   )}
                 </div>
                 {linkedPositions.length > 0 && (
@@ -942,7 +962,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                 <div ref={chatEndRef} />
               </div>
 
-              {/* ── WhatsApp-style input ── */}
+              {canEdit && (
               <div className="flex items-end gap-2 px-3 py-2 shrink-0" style={{ background: '#F0F0F0' }}>
                 <textarea
                   value={newNote}
@@ -964,8 +984,9 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   <Send size={16} />
                 </button>
               </div>
+              )}
 
-              {/* ── footer ── */}
+              {canEdit && (
               <div className="px-5 py-3 border-t border-slate-100 flex gap-3 shrink-0 bg-white rounded-b-2xl">
                 <button onClick={() => { setViewing(null); openEdit(viewing) }} className="btn-primary flex-1 text-sm">
                   <Edit2 size={14} /> ערוך פרטים
@@ -974,6 +995,7 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
                   <Trash2 size={14} />
                 </button>
               </div>
+              )}
 
             </div>
           </div>
