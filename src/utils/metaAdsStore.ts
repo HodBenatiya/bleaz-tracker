@@ -1,4 +1,6 @@
+import { isViewer } from './accessMode'
 import { supabase } from './supabase'
+import { isMissingViewerRpc, readViewerPages, type ViewerFilter, type ViewerTable } from './viewerRead'
 import { campaignIsLive } from './metaAds/live'
 import type { SpendSlice, MapRow } from './metaAds/metrics'
 import { todayInIsrael } from './metaAds/zone'
@@ -56,6 +58,16 @@ function missingTable(error: DbError): boolean {
 
 const INSTALL_HINT = 'טבלאות המודעות עדיין לא הותקנו. אחרי הרצת schema_meta_ads.sql והגדרת הסודות, הנתונים נכנסים לבד כל שעה.'
 
+async function viewerTable(table: ViewerTable, filter: ViewerFilter = {}): Promise<Record<string, unknown>[] | null> {
+  if (!isViewer()) return null
+  try {
+    return await readViewerPages<Record<string, unknown>>(table, filter)
+  } catch (error) {
+    if (isMissingViewerRpc(error as { code?: string; message?: string })) return null
+    throw error
+  }
+}
+
 async function page<T>(load: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: DbError }>): Promise<T[]> {
   const rows: T[] = []
   for (let from = 0; from < 20000; from += 1000) {
@@ -71,7 +83,23 @@ async function page<T>(load: (from: number, to: number) => PromiseLike<{ data: T
 export async function loadAdsBundle(start: string, end: string): Promise<AdsBundle> {
   const israelToday = todayInIsrael()
   try {
-    const [daily, todayRows, campaignRows, mapRows, accountRows, settings, syncRows] = await Promise.all([
+    const viewerDaily = await viewerTable('meta_campaign_daily', { insight_date_gte: start, insight_date_lte: end })
+    const viewerToday = viewerDaily && await viewerTable('meta_campaign_today', { snapshot_date: israelToday })
+    const viewerCampaigns = viewerToday && await viewerTable('meta_campaigns')
+    const viewerMaps = viewerCampaigns && await viewerTable('meta_campaign_positions')
+    const viewerAccounts = viewerMaps && await viewerTable('meta_ad_accounts')
+    const viewerSettings = viewerAccounts && await viewerTable('meta_ads_settings')
+    const [daily, todayRows, campaignRows, mapRows, accountRows, settings, syncRows] = viewerSettings
+      ? [
+          viewerDaily,
+          viewerToday,
+          viewerCampaigns,
+          viewerMaps,
+          viewerAccounts,
+          { data: viewerSettings[0] ?? null, error: null as DbError },
+          { data: [] as { finished_at?: string; ok?: boolean; message?: string }[], error: null as DbError },
+        ] as const
+      : await Promise.all([
       page<Record<string, unknown>>((from, to) =>
         supabase.from('meta_campaign_daily')
           .select('account_id,campaign_id,campaign_name,insight_date,spend,currency,results')
@@ -187,6 +215,8 @@ export async function loadAdsBundle(start: string, end: string): Promise<AdsBund
 }
 
 async function loadCampaignRows(): Promise<Record<string, unknown>[]> {
+  const paged = await viewerTable('meta_campaigns')
+  if (paged) return paged
   try {
     return await page((from, to) =>
       supabase.from('meta_campaigns')
@@ -203,8 +233,12 @@ async function loadCampaignRows(): Promise<Record<string, unknown>[]> {
 }
 
 export async function loadCampaignPositionMaps(): Promise<{ accountId: string; campaignId: string; positionId: string }[]> {
-  const { data, error } = await supabase.from('meta_campaign_positions').select('account_id,campaign_id,position_id').limit(2000)
-  if (error || !data) return []
+  const paged = await viewerTable('meta_campaign_positions')
+  const data = paged ?? (await (async () => {
+    const loaded = await supabase.from('meta_campaign_positions').select('account_id,campaign_id,position_id').limit(2000)
+    if (loaded.error || !loaded.data) return [] as Record<string, unknown>[]
+    return loaded.data as Record<string, unknown>[]
+  })())
   return data.map(row => ({
     accountId: String(row.account_id),
     campaignId: String(row.campaign_id),
@@ -213,7 +247,10 @@ export async function loadCampaignPositionMaps(): Promise<{ accountId: string; c
 }
 
 export async function loadCampaignChoices(): Promise<CampaignChoice[]> {
-  const accounts = await supabase.from('meta_ad_accounts').select('account_id,name').limit(50)
+  const pagedAccounts = await viewerTable('meta_ad_accounts')
+  const accounts = pagedAccounts
+    ? { data: pagedAccounts, error: null as DbError }
+    : await supabase.from('meta_ad_accounts').select('account_id,name').limit(50)
   let campaigns: Record<string, unknown>[]
   try {
     campaigns = await loadCampaignRows()
@@ -237,9 +274,10 @@ export async function loadCampaignChoices(): Promise<CampaignChoice[]> {
 }
 
 export async function loadKnownAds(): Promise<{ accountId: string; adId: string; adsetId: string; campaignId: string; campaignName: string }[]> {
-  const { data, error } = await supabase.from('meta_ads').select('account_id,ad_id,adset_id,campaign_id,name').limit(2000)
-  if (error || !data) return []
-  return data.map(row => ({
+  const paged = await viewerTable('meta_ads')
+  const loaded = paged ? { data: paged, error: null as DbError } : await supabase.from('meta_ads').select('account_id,ad_id,adset_id,campaign_id,name').limit(2000)
+  if (loaded.error || !loaded.data) return []
+  return loaded.data.map(row => ({
     accountId: String(row.account_id),
     adId: String(row.ad_id),
     adsetId: String(row.adset_id ?? ''),
@@ -257,14 +295,18 @@ export interface PlacementSpend {
 }
 
 export async function loadPlacementSpend(start: string, end: string): Promise<PlacementSpend[] | null> {
-  const { data, error } = await supabase.from('meta_ad_placement_insights_daily')
-    .select('publisher_platform,platform_position,spend,currency,leads,insight_date')
-    .gte('insight_date', start)
-    .lte('insight_date', end)
-    .limit(5000)
-  if (error) {
-    if (/schema cache|does not exist|could not find/i.test(error.message)) return null
-    return null
+  let data: { publisher_platform?: unknown; platform_position?: unknown; spend?: unknown; currency?: unknown; leads?: unknown }[] | null = null
+  const paged = await viewerTable('meta_ad_placement_insights_daily', { insight_date_gte: start, insight_date_lte: end })
+  if (paged) {
+    data = paged
+  } else {
+    const loaded = await supabase.from('meta_ad_placement_insights_daily')
+      .select('publisher_platform,platform_position,spend,currency,leads,insight_date')
+      .gte('insight_date', start)
+      .lte('insight_date', end)
+      .limit(5000)
+    if (loaded.error) return null
+    data = loaded.data
   }
   const grouped = new Map<string, PlacementSpend>()
   for (const row of data ?? []) {
@@ -281,13 +323,18 @@ export async function loadPlacementSpend(start: string, end: string): Promise<Pl
 }
 
 export async function loadCampaignNames(): Promise<string[]> {
-  const { data, error } = await supabase.from('meta_campaigns').select('campaign_name').limit(500)
-  if (error || !data) return []
+  const paged = await viewerTable('meta_campaigns')
+  const data = paged ?? (await (async () => {
+    const loaded = await supabase.from('meta_campaigns').select('campaign_name').limit(500)
+    if (loaded.error || !loaded.data) return [] as { campaign_name?: unknown }[]
+    return loaded.data
+  })())
   return [...new Set(data.map(row => String(row.campaign_name ?? '').trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'he'))
 }
 
 export async function saveUsdToIls(rate: number | null): Promise<string | null> {
+  if (isViewer()) return 'צפייה בלבד — אין הרשאת עריכה'
   const { error } = await supabase.from('meta_ads_settings').update({
     usd_to_ils: rate,
     updated_at: new Date().toISOString(),
@@ -296,6 +343,7 @@ export async function saveUsdToIls(rate: number | null): Promise<string | null> 
 }
 
 export async function mapCampaignPosition(accountId: string, campaignId: string, positionId: string): Promise<string | null> {
+  if (isViewer()) return 'צפייה בלבד — אין הרשאת עריכה'
   const { error } = await supabase.from('meta_campaign_positions').upsert({
     account_id: accountId,
     campaign_id: campaignId,
@@ -305,6 +353,7 @@ export async function mapCampaignPosition(accountId: string, campaignId: string,
 }
 
 export async function unmapCampaignPosition(accountId: string, campaignId: string, positionId: string): Promise<string | null> {
+  if (isViewer()) return 'צפייה בלבד — אין הרשאת עריכה'
   const { error } = await supabase.from('meta_campaign_positions').delete()
     .eq('account_id', accountId)
     .eq('campaign_id', campaignId)

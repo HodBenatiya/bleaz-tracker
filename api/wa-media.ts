@@ -1,7 +1,7 @@
 import { contentDisposition } from '../src/utils/storageKey.js'
 import { findStoredMedia, openStoredMedia } from './_ingest.js'
 import { downloadIncomingMedia, redactError } from './_provider.js'
-import { requireUser } from './_auth.js'
+import { requireStaff } from './_auth.js'
 
 function queryValue(value: unknown): string {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '')
@@ -9,7 +9,7 @@ function queryValue(value: unknown): string {
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' })
-  if (!(await requireUser(req, res))) return
+  if (!(await requireStaff(req, res))) return
   const id = queryValue(req.query?.id)
   if (!id) return res.status(400).json({ error: 'missing id' })
   const asJson = queryValue(req.query?.json) === '1'

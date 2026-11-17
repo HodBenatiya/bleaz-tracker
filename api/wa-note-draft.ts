@@ -3,7 +3,7 @@ import { downloadIncomingMedia, redactError } from './_provider.js'
 import { imageVisionAvailable, readImageCv, visionAcceptsMime } from './_cvVision.js'
 import { imageMime, isRasterCv, readCvForDraft, selectCvMessages } from '../src/utils/extractCvText.js'
 import { buildNoteDraftPrompt, draftFromText, IMAGE_CV_STATUS, noteDraftLlmMessages, UNSUPPORTED_CV_STATUS, type NoteDraftImage } from '../src/utils/noteDraft.js'
-import { requireUser } from './_auth.js'
+import { requireStaff } from './_auth.js'
 
 interface IncomingMessage {
   id?: string
@@ -93,7 +93,7 @@ async function polishWithLlm(prompt: ReturnType<typeof buildNoteDraftPrompt>, fa
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })
-  if (!(await requireUser(req, res))) return
+  if (!(await requireStaff(req, res))) return
   const messages = Array.isArray(req.body?.messages) ? req.body.messages as IncomingMessage[] : []
   const chatId = String(req.body?.chatId || '')
   const incoming = messages.filter(message => message?.direction !== 'out')

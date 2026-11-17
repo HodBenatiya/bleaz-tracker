@@ -11,6 +11,9 @@ import {
   migrateFromLocalStorage,
 } from './utils/storage'
 import { stampStatusChange } from './utils/wa'
+import { AccessProvider } from './access/AccessContext'
+import { resolveAppRole, viewAllowed, type AppRole } from './utils/accessRole'
+import { setActiveRole } from './utils/accessMode'
 import { supabase } from './utils/supabase'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
@@ -52,7 +55,9 @@ export default function App() {
   const [authReady,     setAuthReady]     = useState(false)
   const [session,       setSession]       = useState<Session | null>(null)
   const [recovery,      setRecovery]      = useState(false)
+  const [role,          setRole]          = useState<AppRole | null>(null)
   const signedIn = !!session && !recovery
+  const readOnly = role === 'viewer'
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event, next) => {
@@ -63,17 +68,37 @@ export default function App() {
     return () => data.subscription.unsubscribe()
   }, [])
 
+  useEffect(() => {
+    if (!signedIn || !session?.user) {
+      setActiveRole('admin')
+      setRole(null)
+      return
+    }
+    let cancelled = false
+    const userId = session.user.id
+    const email = session.user.email
+    supabase.from('user_roles').select('role').eq('user_id', userId).maybeSingle().then(({ data, error }) => {
+      if (cancelled) return
+      const stored = error ? undefined : (data?.role ?? null)
+      const next = resolveAppRole({ email, role: stored })
+      setActiveRole(next)
+      setRole(next)
+    })
+    return () => { cancelled = true }
+  }, [signedIn, session?.user?.id, session?.user?.email])
+
   // ── Initial data load + optional localStorage migration ──
   useEffect(() => {
-    if (!signedIn) return
+    if (!signedIn || !role) return
     let cancelled = false
     async function init() {
       setLoading(true)
       const [r, p, pl, t, c, box] = await Promise.all([
-        loadReports(), loadPositions(), loadPipeline(), loadTasks(), loadCandidates(), loadWaInbox(),
+        loadReports(), loadPositions(), loadPipeline(), loadTasks(), loadCandidates(),
+        loadWaInbox(),
       ])
 
-      if (r.length === 0 && p.length === 0 && pl.length === 0 && t.length === 0) {
+      if (role !== 'viewer' && r.length === 0 && p.length === 0 && pl.length === 0 && t.length === 0) {
         // DB is empty — try migrating from localStorage
         const migrated = await migrateFromLocalStorage()
         setReports(migrated.reports)
@@ -95,11 +120,15 @@ export default function App() {
     }
     init()
     return () => { cancelled = true }
-  }, [signedIn])
+  }, [signedIn, role])
+
+  useEffect(() => {
+    if (role === 'viewer' && !viewAllowed(role, view)) setView('management')
+  }, [role, view])
 
   // ── Real-time subscriptions for every signed-in CRM user ──
   useEffect(() => {
-    if (!signedIn) return
+    if (!signedIn || role !== 'admin') return
     const channel = supabase.channel('bleaz-realtime')
 
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reports' }, payload => {
@@ -155,39 +184,49 @@ export default function App() {
       supabase.removeChannel(channel)
       supabase.removeChannel(waChannel)
     }
-  }, [signedIn])
+  }, [signedIn, role])
 
   // ── Handlers ──
   const handleSave = useCallback((report: DailyReport) => {
+    if (readOnly) return
     setReports(prev => localUpsert(prev, report))
     upsertReport(report)
-  }, [])
+  }, [readOnly])
 
   const handleDelete = useCallback((id: string) => {
+    if (readOnly) return
     setReports(prev => prev.filter(r => r.id !== id))
     deleteReport(id)
-  }, [])
+  }, [readOnly])
 
-  const handleEdit    = useCallback((report: DailyReport) => { setEditingReport(report); setView('form') }, [])
-  const handleNewDay  = useCallback(() => { setEditingReport(null); setView('form') }, [])
-  const handleNav     = useCallback((v: View) => { setView(v); if (v !== 'form') setEditingReport(null) }, [])
+  const handleEdit    = useCallback((report: DailyReport) => { if (readOnly) return; setEditingReport(report); setView('form') }, [readOnly])
+  const handleNewDay  = useCallback(() => { if (readOnly) return; setEditingReport(null); setView('form') }, [readOnly])
+  const handleNav     = useCallback((v: View) => {
+    if (role && !viewAllowed(role, v)) return
+    setView(v)
+    if (v !== 'form') setEditingReport(null)
+  }, [role])
 
   const handlePositionsChange = useCallback((newPositions: SavedPosition[]) => {
+    if (readOnly) return
     setPositions(newPositions)
     savePositions(newPositions)
-  }, [])
+  }, [readOnly])
 
   const handlePipelineChange = useCallback((newPipeline: PipelineCompany[]) => {
+    if (readOnly) return
     setPipeline(newPipeline)
     savePipeline(newPipeline)
-  }, [])
+  }, [readOnly])
 
   const handleTasksChange = useCallback((newTasks: Task[]) => {
+    if (readOnly) return
     setTasks(newTasks)
     saveTasks(newTasks)
-  }, [])
+  }, [readOnly])
 
   const handleCandidatesChange = useCallback(async (newCandidates: Candidate[]): Promise<boolean> => {
+    if (readOnly) return false
     const prevById = new Map(candidates.map(c => [c.id, c]))
     const prevIds = candidates.map(c => c.id)
     // היסטוריית סטטוס נכתבת רק כאן, לכל שינוי סטטוס שמגיע מהמסכים.
@@ -213,10 +252,10 @@ export default function App() {
       alert('שגיאה בשמירה: ' + (err instanceof Error ? err.message : 'נסה שוב'))
       return false
     }
-  }, [candidates])
+  }, [candidates, readOnly])
 
   useEffect(() => {
-    if (!signedIn) return
+    if (!signedIn || !role) return
     const timer = setInterval(() => {
       loadWaInbox().then(box => {
         if (box.error) return
@@ -226,7 +265,7 @@ export default function App() {
       })
     }, 8000)
     return () => clearInterval(timer)
-  }, [signedIn])
+  }, [signedIn, role])
 
   const patchCandidate = useCallback((next: Candidate) => {
     setCandidates(prev => prev.map(c => c.id === next.id ? next : c))
@@ -256,7 +295,7 @@ export default function App() {
     )
   }
 
-  if (!authReady) {
+  if (!authReady || (signedIn && !role)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
         <p className="text-slate-500">טוען…</p>
@@ -281,6 +320,7 @@ export default function App() {
   }
 
   return (
+    <AccessProvider role={role || 'admin'}>
     <Layout
       view={view}
       onNav={handleNav}
@@ -289,6 +329,7 @@ export default function App() {
       waUnread={waUnread}
       accountEmail={session?.user.email || ''}
       onLogout={() => { supabase.auth.signOut() }}
+      readOnly={readOnly}
     >
       {view === 'dashboard' && (
         <Dashboard
@@ -336,5 +377,6 @@ export default function App() {
         />
       )}
     </Layout>
+    </AccessProvider>
   )
 }

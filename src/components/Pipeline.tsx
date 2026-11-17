@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Plus, Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react'
+import { useCanEdit } from '../access/AccessContext'
 import type { PipelineCompany, PipelineStage } from '../types'
 import { PIPELINE_STAGE_LABELS, PIPELINE_STAGE_COLORS } from '../types'
 import { generateId } from '../utils/helpers'
@@ -21,6 +22,7 @@ const EMPTY_FORM = {
 }
 
 export default function Pipeline({ pipeline, onChange }: Props) {
+  const canEdit = useCanEdit()
   const [isAdding,  setIsAdding]  = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form,      setForm]      = useState({ ...EMPTY_FORM })
@@ -86,7 +88,7 @@ export default function Pipeline({ pipeline, onChange }: Props) {
           <h2 className="text-lg font-bold text-slate-800">פייפליין לקוחות — צחי</h2>
           <p className="text-sm text-slate-500 mt-0.5">מעקב אחרי חברות בתהליך גיוס לקוחות</p>
         </div>
-        <button onClick={startAdd} className="btn-primary"><Plus size={16} /> הוסף חברה</button>
+        {canEdit && <button onClick={startAdd} className="btn-primary"><Plus size={16} /> הוסף חברה</button>}
       </div>
 
       {/* Stage summary pills */}
@@ -203,6 +205,7 @@ export default function Pipeline({ pipeline, onChange }: Props) {
                         )}
                       </div>
 
+                      {canEdit && (
                       <div className="flex items-center gap-2 flex-wrap">
                         {canAdvance && (
                           <button onClick={() => advanceStage(c.id)} className="btn-primary text-sm !px-4 !py-2">
@@ -216,6 +219,7 @@ export default function Pipeline({ pipeline, onChange }: Props) {
                           <Trash2 size={14} /> מחק
                         </button>
                       </div>
+                      )}
                     </>
                   )}
                 </div>

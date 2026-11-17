@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && tsc -p tsconfig.api.json --noEmit && vite build",
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
     "test:guarantee": "node --experimental-strip-types scripts/guarantee-selfcheck.ts",
+    "test:viewer": "node --experimental-strip-types scripts/viewer-role-selfcheck.ts",
     "preview": "vite preview"
   },
   "dependencies": {

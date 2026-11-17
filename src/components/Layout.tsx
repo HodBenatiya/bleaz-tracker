@@ -1,6 +1,7 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BarChart2, ClipboardList, History, Briefcase, GitBranch, CheckSquare, Users, TrendingUp, Database, LayoutDashboard, LineChart, Share2, MessageCircle } from 'lucide-react'
 import type { View, Task } from '../types'
+import { viewAllowed } from '../utils/accessRole'
 import LiveClock from './LiveClock'
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
   waUnread?: number
   accountEmail?: string
   onLogout?: () => void
+  readOnly?: boolean
 }
 
 const PAGE_SUB: Record<View, string> = {
@@ -32,12 +34,43 @@ const PAGE_SUB: Record<View, string> = {
 
 const SIDEBAR_W = 'w-52' // 208px
 
-export default function Layout({ view, onNav, children, onNewDay, tasks, waUnread = 0, accountEmail, onLogout }: Props) {
+export default function Layout({ view, onNav, children, onNewDay, tasks, waUnread = 0, accountEmail, onLogout, readOnly = false }: Props) {
+  useEffect(() => {
+    if (!readOnly) return
+    const root = document.documentElement
+    root.classList.add('viewer-lock')
+    const stop = (event: Event) => {
+      const target = event.target instanceof Element ? event.target : null
+      if (event.type === 'selectstart' && target?.closest('input, textarea')) return
+      event.preventDefault()
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      const key = event.key.toLowerCase()
+      if (key === 'c' || key === 'x' || key === 'a' || key === 'p' || key === 's') event.preventDefault()
+    }
+    document.addEventListener('copy', stop)
+    document.addEventListener('cut', stop)
+    document.addEventListener('contextmenu', stop)
+    document.addEventListener('dragstart', stop)
+    document.addEventListener('selectstart', stop)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      root.classList.remove('viewer-lock')
+      document.removeEventListener('copy', stop)
+      document.removeEventListener('cut', stop)
+      document.removeEventListener('contextmenu', stop)
+      document.removeEventListener('dragstart', stop)
+      document.removeEventListener('selectstart', stop)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [readOnly])
+
   const today       = new Date().toISOString().split('T')[0]
   const openTasks   = tasks.filter(t => !t.done)
   const urgentCount = openTasks.filter(t => t.dueDate <= today).length
 
-  const TABS: { id: View; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const ALL_TABS: { id: View; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'management', label: 'דשבורד ניהול', icon: <LineChart   size={16} /> },
     { id: 'dashboard',  label: 'דשבורד',     icon: <BarChart2    size={16} /> },
     { id: 'board',      label: 'לוח בקרה',  icon: <LayoutDashboard size={16} /> },
@@ -52,6 +85,7 @@ export default function Layout({ view, onNav, children, onNewDay, tasks, waUnrea
     { id: 'history',    label: 'היסטוריה',   icon: <History      size={16} /> },
     { id: 'meta',       label: 'Meta Ads',   icon: <Share2       size={16} /> },
   ]
+  const TABS = ALL_TABS.filter(tab => !readOnly || viewAllowed('viewer', tab.id))
 
   const currentTab = TABS.find(t => t.id === view)
 
@@ -118,6 +152,11 @@ export default function Layout({ view, onNav, children, onNewDay, tasks, waUnrea
           </div>
           <LiveClock />
         </div>
+        {readOnly && (
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-900">
+            צפייה בלבד — בלי עריכה, ייצוא, הדפסה או הורדת קבצים
+          </div>
+        )}
 
         <main className={view === 'whatsapp' ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 p-5'}>
           {children}

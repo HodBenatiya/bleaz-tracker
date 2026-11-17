@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronRight, ChevronLeft, ChevronDown, Edit2, Check, X, TrendingUp, DollarSign, Users, Clock, AlertCircle, CalendarCheck } from 'lucide-react'
 import type { Candidate, SavedPosition, DailyReport } from '../types'
 import { CANDIDATE_STATUS_COLORS, CANDIDATE_STATUS_LABELS } from '../types'
+import { useCanEdit } from '../access/AccessContext'
 import { candidateAnchor, placementAttribution, placementInMonth } from '../utils/candidateAnchor'
 import { placementGuarantee } from '../utils/guarantee'
 import AttributionMonthField from './AttributionMonthField'
@@ -118,6 +119,7 @@ function candidateCompany(c: Candidate, positions: SavedPosition[]): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Management({ candidates, positions, reports, onCandidatesChange }: Props) {
+  const canEdit = useCanEdit()
   const [filter,         setFilter]         = useState<MonthFilter>(currentMonth)
   const [target,         setTarget]         = useState(() => loadGoal(currentMonth()))
   const [editGoal,       setEditGoal]       = useState(false)
@@ -345,7 +347,7 @@ export default function Management({ candidates, positions, reports, onCandidate
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-slate-800">יעד חודשי — {monthLabel(filter)}</h3>
-            {!editGoal ? (
+            {canEdit && (!editGoal ? (
               <button
                 onClick={() => { setEditGoal(true); setGoalInput(String(target || '')) }}
                 className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-semibold transition">
@@ -374,7 +376,7 @@ export default function Management({ candidates, positions, reports, onCandidate
                   <X size={13} />
                 </button>
               </div>
-            )}
+            ))}
           </div>
 
           {/* Progress */}
@@ -669,11 +671,21 @@ export default function Management({ candidates, positions, reports, onCandidate
                         ) : null}
                       </td>
                       <td className="px-4 py-3">
+                        {canEdit ? (
                         <div className="flex gap-1 flex-wrap">
                           <InvBtn active={inv === 'none'} color="slate"  onClick={() => updateInvoice(c, 'none')}>לא נשלחה</InvBtn>
                           <InvBtn active={inv === 'sent'} color="amber"  onClick={() => updateInvoice(c, 'sent')}>נשלחה</InvBtn>
                           <InvBtn active={inv === 'paid'} color="green"  onClick={() => updateInvoice(c, 'paid')}>שולם ✓</InvBtn>
                         </div>
+                        ) : (
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            inv === 'paid' ? 'bg-green-100 text-green-700' :
+                            inv === 'sent' ? 'bg-amber-100 text-amber-700' :
+                            'bg-slate-100 text-slate-500'
+                          }`}>
+                            {inv === 'paid' ? 'שולם ✓' : inv === 'sent' ? 'נשלחה' : 'לא נשלחה'}
+                          </span>
+                        )}
                         {c.paidDate && inv === 'paid' && (
                           <div className="text-[10px] text-slate-400 mt-0.5">שולם: {fmtDate(c.paidDate)}</div>
                         )}

@@ -1,19 +1,46 @@
 import type { DailyReport, SavedPosition, PipelineCompany, Task, Candidate, WaInboxLead, WaSessionState } from '../types'
-import { mergeCandidateSave } from './wa'
+import { redactJson } from './accessRole'
+import { isViewer } from './accessMode'
 import { supabase } from './supabase'
+import { isMissingViewerRpc, readViewerPages, type ViewerTable } from './viewerRead'
+import { mergeCandidateSave } from './wa'
+
+function assertCanWrite(): void {
+  if (isViewer()) throw new Error('צפייה בלבד — אין הרשאת עריכה')
+}
+
+function present<T>(value: T): T {
+  return isViewer() ? redactJson(value) : value
+}
+
+/** Viewer pages, 50 rows at a time. Null means the RPC is not installed yet. */
+async function viewerRows<T>(table: ViewerTable): Promise<T[] | null> {
+  if (!isViewer()) return null
+  try {
+    return await readViewerPages<T>(table)
+  } catch (error) {
+    const err = error as { code?: string; message?: string }
+    if (isMissingViewerRpc(err)) return null
+    console.error(table, err.message || error)
+    return []
+  }
+}
 
 // ── Reports ──────────────────────────────────────────────────────────────────
 
 export async function loadReports(): Promise<DailyReport[]> {
+  const paged = await viewerRows<{ data: DailyReport }>('reports')
+  if (paged) return paged.map(row => present(row.data))
   const { data, error } = await supabase
     .from('reports')
     .select('data')
     .order('date', { ascending: false })
   if (error) { console.error('loadReports:', error); return [] }
-  return (data ?? []).map(row => row.data as DailyReport)
+  return (data ?? []).map(row => present(row.data as DailyReport))
 }
 
 export async function upsertReport(report: DailyReport): Promise<void> {
+  assertCanWrite()
   const { error } = await supabase.from('reports').upsert({
     id:         report.id,
     date:       report.date,
@@ -24,6 +51,7 @@ export async function upsertReport(report: DailyReport): Promise<void> {
 }
 
 export async function deleteReport(id: string): Promise<void> {
+  assertCanWrite()
   const { error } = await supabase.from('reports').delete().eq('id', id)
   if (error) console.error('deleteReport:', error)
 }
@@ -31,19 +59,24 @@ export async function deleteReport(id: string): Promise<void> {
 // ── Positions ─────────────────────────────────────────────────────────────────
 
 export async function loadPositions(): Promise<SavedPosition[]> {
-  const { data, error } = await supabase.from('positions').select('data')
-  if (error) { console.error('loadPositions:', error); return [] }
-  return (data ?? []).map(row => {
+  const paged = await viewerRows<{ data: Record<string, unknown> }>('positions')
+  const rows = paged ?? await (async () => {
+    const { data, error } = await supabase.from('positions').select('data')
+    if (error) { console.error('loadPositions:', error); return [] as { data: Record<string, unknown> }[] }
+    return (data ?? []) as { data: Record<string, unknown> }[]
+  })()
+  return rows.map(row => {
     const p = row.data as Record<string, unknown>
-    return {
+    return present({
       funnelSentToClient: 0, funnelInterviews: 0,
       funnelAccepted: 0,     funnelConfirmed:  0,
       ...p,
-    } as SavedPosition
+    } as SavedPosition)
   })
 }
 
 export async function savePositions(positions: SavedPosition[]): Promise<void> {
+  assertCanWrite()
   const { data: existing } = await supabase.from('positions').select('id')
   const existingIds = (existing ?? []).map(r => r.id as string)
   const newIds      = positions.map(p => p.id)
@@ -63,12 +96,15 @@ export async function savePositions(positions: SavedPosition[]): Promise<void> {
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 export async function loadPipeline(): Promise<PipelineCompany[]> {
+  const paged = await viewerRows<{ data: PipelineCompany }>('pipeline_companies')
+  if (paged) return paged.map(row => present(row.data))
   const { data, error } = await supabase.from('pipeline_companies').select('data')
   if (error) { console.error('loadPipeline:', error); return [] }
-  return (data ?? []).map(row => row.data as PipelineCompany)
+  return (data ?? []).map(row => present(row.data as PipelineCompany))
 }
 
 export async function savePipeline(companies: PipelineCompany[]): Promise<void> {
+  assertCanWrite()
   const { data: existing } = await supabase.from('pipeline_companies').select('id')
   const existingIds = (existing ?? []).map(r => r.id as string)
   const newIds      = companies.map(c => c.id)
@@ -88,12 +124,15 @@ export async function savePipeline(companies: PipelineCompany[]): Promise<void> 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 export async function loadTasks(): Promise<Task[]> {
+  const paged = await viewerRows<{ data: Task }>('tasks')
+  if (paged) return paged.map(row => present(row.data))
   const { data, error } = await supabase.from('tasks').select('data')
   if (error) { console.error('loadTasks:', error); return [] }
-  return (data ?? []).map(row => row.data as Task)
+  return (data ?? []).map(row => present(row.data as Task))
 }
 
 export async function saveTasks(tasks: Task[]): Promise<void> {
+  assertCanWrite()
   const { data: existing } = await supabase.from('tasks').select('id')
   const existingIds = (existing ?? []).map(r => r.id as string)
   const newIds      = tasks.map(t => t.id)
@@ -116,7 +155,30 @@ function missingCampaignColumns(message: string): boolean {
   return /meta_account_id|meta_campaign_id|meta_adset_id|meta_ad_id|schema cache|could not find the/i.test(message)
 }
 
+function candidateFromRow(row: {
+  data: Candidate
+  meta_account_id?: string | null
+  meta_campaign_id?: string | null
+  meta_adset_id?: string | null
+  meta_ad_id?: string | null
+}): Candidate {
+  const candidate = present({ ...(row.data as Candidate) })
+  if (!candidate.metaAccountId && row.meta_account_id) candidate.metaAccountId = row.meta_account_id
+  if (!candidate.metaCampaignId && row.meta_campaign_id) candidate.metaCampaignId = row.meta_campaign_id
+  if (!candidate.metaAdsetId && row.meta_adset_id) candidate.metaAdsetId = row.meta_adset_id
+  if (!candidate.metaAdId && row.meta_ad_id) candidate.metaAdId = row.meta_ad_id
+  return candidate
+}
+
 export async function loadCandidates(): Promise<Candidate[]> {
+  const paged = await viewerRows<{
+    data: Candidate
+    meta_account_id?: string | null
+    meta_campaign_id?: string | null
+    meta_adset_id?: string | null
+    meta_ad_id?: string | null
+  }>('candidates')
+  if (paged) return paged.map(candidateFromRow)
   const withColumns = await supabase
     .from('candidates')
     .select('data, meta_account_id, meta_campaign_id, meta_adset_id, meta_ad_id')
@@ -125,18 +187,17 @@ export async function loadCandidates(): Promise<Candidate[]> {
     ? await supabase.from('candidates').select('data').order('updated_at', { ascending: false })
     : withColumns
   if (rows.error) { console.error('loadCandidates:', rows.error); return [] }
-  return (rows.data ?? []).map(row => {
-    const candidate = row.data as Candidate
-    const extra = row as { meta_account_id?: string | null; meta_campaign_id?: string | null; meta_adset_id?: string | null; meta_ad_id?: string | null }
-    if (!candidate.metaAccountId && extra.meta_account_id) candidate.metaAccountId = extra.meta_account_id
-    if (!candidate.metaCampaignId && extra.meta_campaign_id) candidate.metaCampaignId = extra.meta_campaign_id
-    if (!candidate.metaAdsetId && extra.meta_adset_id) candidate.metaAdsetId = extra.meta_adset_id
-    if (!candidate.metaAdId && extra.meta_ad_id) candidate.metaAdId = extra.meta_ad_id
-    return candidate
-  })
+  return (rows.data ?? []).map(row => candidateFromRow(row as {
+    data: Candidate
+    meta_account_id?: string | null
+    meta_campaign_id?: string | null
+    meta_adset_id?: string | null
+    meta_ad_id?: string | null
+  }))
 }
 
 export async function upsertCandidate(candidate: Candidate): Promise<Candidate> {
+  assertCanWrite()
   const { data: freshRow, error: readErr } = await supabase
     .from('candidates').select('data').eq('id', candidate.id).maybeSingle()
   if (readErr) throw new Error(readErr.message)
@@ -173,13 +234,11 @@ export interface WaInboxLoad {
   error: string | null
 }
 
-export async function loadWaInbox(): Promise<WaInboxLoad> {
-  const { data, error } = await supabase.from('wa_inbox').select('data').order('updated_at', { ascending: false })
-  if (error) return { rows: [], session: null, error: error.message }
+function parseWaInbox(data: { data: WaInboxLead & Partial<WaSessionState> }[]): WaInboxLoad {
   const rows: WaInboxLead[] = []
   let session: WaSessionState | null = null
-  for (const row of data ?? []) {
-    const item = row.data as (WaInboxLead & Partial<WaSessionState>) | null
+  for (const row of data) {
+    const item = present(row.data)
     if (!item || typeof item !== 'object') continue
     if (item.id === 'wa_session' || item.kind === 'session') {
       session = item as WaSessionState
@@ -190,7 +249,16 @@ export async function loadWaInbox(): Promise<WaInboxLoad> {
   return { rows, session, error: null }
 }
 
+export async function loadWaInbox(): Promise<WaInboxLoad> {
+  const paged = await viewerRows<{ data: WaInboxLead & Partial<WaSessionState> }>('wa_inbox')
+  if (paged) return parseWaInbox(paged)
+  const { data, error } = await supabase.from('wa_inbox').select('data').order('updated_at', { ascending: false })
+  if (error) return { rows: [], session: null, error: error.message }
+  return parseWaInbox((data ?? []).map(row => ({ data: row.data as WaInboxLead & Partial<WaSessionState> })))
+}
+
 export async function markCandidateWaRead(id: string): Promise<Candidate | null> {
+  assertCanWrite()
   const { data, error } = await supabase.from('candidates').select('data').eq('id', id).maybeSingle()
   if (error || !data?.data) return null
   const c = data.data as Candidate
@@ -206,6 +274,7 @@ export async function markCandidateWaRead(id: string): Promise<Candidate | null>
 }
 
 export async function markWaInboxRead(id: string): Promise<WaInboxLead | null> {
+  assertCanWrite()
   const { data, error } = await supabase.from('wa_inbox').select('data').eq('id', id).maybeSingle()
   if (error || !data?.data) return null
   const lead = data.data as WaInboxLead
@@ -217,6 +286,7 @@ export async function markWaInboxRead(id: string): Promise<WaInboxLead | null> {
 }
 
 export async function linkWaInbox(id: string, candidateId: string): Promise<WaInboxLead | null> {
+  assertCanWrite()
   const { data, error } = await supabase.from('wa_inbox').select('data').eq('id', id).maybeSingle()
   if (error || !data?.data) return null
   const lead = data.data as WaInboxLead
@@ -227,6 +297,7 @@ export async function linkWaInbox(id: string, candidateId: string): Promise<WaIn
 }
 
 export async function deleteCandidate(id: string): Promise<void> {
+  assertCanWrite()
   const { error } = await supabase.from('candidates').delete().eq('id', id)
   if (error) console.error('deleteCandidate:', error)
 }
@@ -238,6 +309,7 @@ export async function migrateFromLocalStorage(): Promise<{
   reports: DailyReport[]; positions: SavedPosition[];
   pipeline: PipelineCompany[]; tasks: Task[]
 }> {
+  if (isViewer()) return { reports: [], positions: [], pipeline: [], tasks: [] }
   const parse = <T>(key: string): T[] => {
     try { return JSON.parse(localStorage.getItem(key) ?? '[]') as T[] }
     catch { return [] }

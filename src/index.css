@@ -104,3 +104,30 @@
     @apply bg-slate-100 text-slate-600;
   }
 }
+
+/* Viewer: best-effort barrier against selecting, dragging, or printing CRM text. */
+html.viewer-lock,
+html.viewer-lock body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+html.viewer-lock input,
+html.viewer-lock textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+@media print {
+  html.viewer-lock body {
+    display: none !important;
+  }
+
+  html.viewer-lock::after {
+    content: 'הדפסה אינה זמינה בצפייה בלבד';
+    display: block;
+    padding: 2rem;
+    font-family: sans-serif;
+  }
+}
