@@ -19,11 +19,12 @@
 -- WHAT REMAINS POSSIBLE
 -- A viewer can still page anything the screens show, 50 rows per call, through
 -- public.viewer_read_page. A script using her access token can walk those pages
--- slowly. Each call is written to public.viewer_access_log. File bytes, wa_inbox,
+-- slowly. Each call is written to public.viewer_access_log. File bytes,
 -- token_env, sync logs, sync state, status history, and every write are denied.
--- The anon key without her session is unchanged: service-role jobs (meta-ads-sync,
--- pg_cron, WAHA ingest) bypass RLS, and the existing anon wa-media policies stay
--- so an ingest fallback that has no user JWT still works.
+-- Conversation text in wa_inbox is paged through viewer_read_page. The files are not.
+-- Service-role jobs (meta-ads-sync, pg_cron, WAHA ingest) bypass RLS.
+-- There is no anon policy on storage. The public anon key cannot read or
+-- write cvs or wa-media. Ingest uses the service role.
 
 -- ── roles ───────────────────────────────────────────────────────────────────
 -- Created before is_admin() so the SQL function body can be validated.
@@ -205,8 +206,9 @@ begin
   end loop;
 end $$;
 
--- wa_inbox stays closed to viewers. Drop a legacy policy that also covered
--- anon (schema_wa.sql). Ingest uses the service role, which bypasses RLS.
+-- Direct wa_inbox reads stay admin-only. Viewers page it through
+-- viewer_read_page. Drop a legacy policy that also covered anon
+-- (schema_wa.sql). Ingest uses the service role, which bypasses RLS.
 do $$
 declare
   pol record;
@@ -236,7 +238,7 @@ begin
 end $$;
 
 -- ── storage: viewers get nothing ────────────────────────────────────────────
--- Anon wa-media policies stay so a no-JWT ingest fallback still works.
+-- No anon policies. Production has none, and ingest uses the service role.
 -- Authenticated read/write requires admin. service_role bypasses RLS.
 
 do $$
@@ -259,19 +261,6 @@ begin
     execute format('drop policy if exists %I on storage.objects', pol.policyname);
   end loop;
 end $$;
-
-create policy "wa media anon upload"
-  on storage.objects for insert to anon
-  with check (bucket_id = 'wa-media');
-
-create policy "wa media anon update"
-  on storage.objects for update to anon
-  using (bucket_id = 'wa-media')
-  with check (bucket_id = 'wa-media');
-
-create policy "wa media anon read"
-  on storage.objects for select to anon
-  using (bucket_id = 'wa-media');
 
 create policy "wa media admin read"
   on storage.objects for select to authenticated
@@ -366,8 +355,9 @@ $$;
 revoke all on function public.viewer_redact_json(jsonb) from public, anon, authenticated;
 
 -- ── paged reads + access log ────────────────────────────────────────────────
--- Sensitive and not returned: token_env, wa_inbox, meta_sync_log,
--- meta_sync_state, meta_status_history, user_roles, viewer_access_log.
+-- Sensitive and not returned: token_env, meta_sync_log, meta_sync_state,
+-- meta_status_history, user_roles, viewer_access_log.
+-- wa_inbox text is returned with file pointers removed.
 
 create table if not exists public.viewer_access_log (
   id bigint generated always as identity primary key,
@@ -408,6 +398,7 @@ declare
     'pipeline_companies',
     'tasks',
     'candidates',
+    'wa_inbox',
     'meta_campaign_daily',
     'meta_campaign_today',
     'meta_campaigns',
@@ -528,6 +519,18 @@ begin
           ) src
         ) paged;
     end;
+  elsif p_table = 'wa_inbox' then
+    select coalesce(jsonb_agg((to_jsonb(paged) - 'ord') order by paged.ord), '[]'::jsonb)
+      into result
+    from (
+      select row_number() over () as ord, src.*
+      from (
+        select id, public.viewer_redact_json(data) as data, updated_at
+        from public.wa_inbox
+        order by updated_at desc nulls last, id desc
+        limit lim offset off
+      ) src
+    ) paged;
   elsif p_table = 'meta_campaign_daily' then
     select coalesce(jsonb_agg((to_jsonb(paged) - 'ord') order by paged.ord), '[]'::jsonb)
       into result

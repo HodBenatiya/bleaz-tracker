@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useCanEdit } from '../access/AccessContext'
 import { Zap, Upload, Share2, Info } from 'lucide-react'
 import type { SavedPosition, DailyReport, JobPosition } from '../types'
 import { loadMetaCredentials } from '../utils/metaApi'
@@ -26,6 +27,7 @@ function buildTodayJobs(savedPositions: SavedPosition[], reports: DailyReport[])
 }
 
 export default function MetaPage({ savedPositions, reports, onSave }: Props) {
+  const canEdit = useCanEdit()
   const [showSync, setShowSync] = useState(false)
   const [showCsv,  setShowCsv]  = useState(false)
   const metaConnected = !!loadMetaCredentials()
@@ -49,47 +51,30 @@ export default function MetaPage({ savedPositions, reports, onSave }: Props) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-        {/* Meta API Sync */}
-        <button
-          onClick={() => setShowSync(true)}
-          className="card text-right hover:shadow-lg transition-shadow group flex flex-col gap-3 p-5"
-        >
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${metaConnected ? 'bg-blue-600' : 'bg-slate-100'}`}>
-            <Zap size={22} className={metaConnected ? 'text-white' : 'text-slate-400'} />
+        {canEdit ? (
+          <button
+            onClick={() => setShowSync(true)}
+            className="card text-right hover:shadow-lg transition-shadow group flex flex-col gap-3 p-5"
+          >
+            <MetaSyncCard metaConnected={metaConnected} />
+          </button>
+        ) : (
+          <div className="card text-right flex flex-col gap-3 p-5">
+            <MetaSyncCard metaConnected={metaConnected} />
           </div>
-          <div>
-            <p className="font-bold text-slate-800 text-base mb-1">
-              {metaConnected ? 'סנכרון Meta API' : 'חבר Meta API'}
-            </p>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              {metaConnected
-                ? 'שלוף נתוני קמפיינים, הוצאות ולידים ישירות מחשבון Meta שלך.'
-                : 'הגדר Access Token ו-Account ID להתחלת סנכרון אוטומטי.'}
-            </p>
+        )}
+        {canEdit ? (
+          <button
+            onClick={() => setShowCsv(true)}
+            className="card text-right hover:shadow-lg transition-shadow group flex flex-col gap-3 p-5"
+          >
+            <MetaCsvCard />
+          </button>
+        ) : (
+          <div className="card text-right flex flex-col gap-3 p-5">
+            <MetaCsvCard />
           </div>
-          <span className={`text-xs font-semibold px-2 py-1 rounded-full self-start ${metaConnected ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-            {metaConnected ? 'מחובר ✓' : 'לא מחובר'}
-          </span>
-        </button>
-
-        {/* CSV Import */}
-        <button
-          onClick={() => setShowCsv(true)}
-          className="card text-right hover:shadow-lg transition-shadow group flex flex-col gap-3 p-5"
-        >
-          <div className="w-11 h-11 rounded-xl bg-indigo-100 flex items-center justify-center">
-            <Upload size={22} className="text-indigo-600" />
-          </div>
-          <div>
-            <p className="font-bold text-slate-800 text-base mb-1">ייבוא CSV</p>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              ייצא דוח מ-Meta Ads Manager ועלה אותו כאן. הנתונים ימופו אוטומטית למשרות.
-            </p>
-          </div>
-          <span className="text-xs font-semibold px-2 py-1 rounded-full self-start bg-indigo-50 text-indigo-700">
-            ייבא קובץ CSV
-          </span>
-        </button>
+        )}
       </div>
 
       {/* Info box */}
@@ -107,7 +92,7 @@ export default function MetaPage({ savedPositions, reports, onSave }: Props) {
       </div>
 
       {/* Modals */}
-      {showSync && (
+      {canEdit && showSync && (
         <MetaSync
           date={today}
           savedPositions={savedPositions}
@@ -116,7 +101,7 @@ export default function MetaPage({ savedPositions, reports, onSave }: Props) {
           onClose={() => setShowSync(false)}
         />
       )}
-      {showCsv && (
+      {canEdit && showCsv && (
         <MetaCsvImport
           savedPositions={savedPositions}
           currentJobs={jobs}
@@ -125,5 +110,47 @@ export default function MetaPage({ savedPositions, reports, onSave }: Props) {
         />
       )}
     </div>
+  )
+}
+
+function MetaSyncCard({ metaConnected }: { metaConnected: boolean }) {
+  return (
+    <>
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${metaConnected ? 'bg-blue-600' : 'bg-slate-100'}`}>
+        <Zap size={22} className={metaConnected ? 'text-white' : 'text-slate-400'} />
+      </div>
+      <div>
+        <p className="font-bold text-slate-800 text-base mb-1">
+          {metaConnected ? 'סנכרון Meta API' : 'חבר Meta API'}
+        </p>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          {metaConnected
+            ? 'שלוף נתוני קמפיינים, הוצאות ולידים ישירות מחשבון Meta שלך.'
+            : 'הגדר Access Token ו-Account ID להתחלת סנכרון אוטומטי.'}
+        </p>
+      </div>
+      <span className={`text-xs font-semibold px-2 py-1 rounded-full self-start ${metaConnected ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+        {metaConnected ? 'מחובר ✓' : 'לא מחובר'}
+      </span>
+    </>
+  )
+}
+
+function MetaCsvCard() {
+  return (
+    <>
+      <div className="w-11 h-11 rounded-xl bg-indigo-100 flex items-center justify-center">
+        <Upload size={22} className="text-indigo-600" />
+      </div>
+      <div>
+        <p className="font-bold text-slate-800 text-base mb-1">ייבוא CSV</p>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          ייצא דוח מ-Meta Ads Manager ועלה אותו כאן. הנתונים ימופו אוטומטית למשרות.
+        </p>
+      </div>
+      <span className="text-xs font-semibold px-2 py-1 rounded-full self-start bg-indigo-50 text-indigo-700">
+        ייבא קובץ CSV
+      </span>
+    </>
   )
 }

@@ -95,7 +95,7 @@ export default function App() {
       setLoading(true)
       const [r, p, pl, t, c, box] = await Promise.all([
         loadReports(), loadPositions(), loadPipeline(), loadTasks(), loadCandidates(),
-        role === 'viewer' ? Promise.resolve({ rows: [], session: null, error: null }) : loadWaInbox(),
+        loadWaInbox(),
       ])
 
       if (role !== 'viewer' && r.length === 0 && p.length === 0 && pl.length === 0 && t.length === 0) {
@@ -255,7 +255,7 @@ export default function App() {
   }, [candidates, readOnly])
 
   useEffect(() => {
-    if (!signedIn || role !== 'admin') return
+    if (!signedIn || !role) return
     const timer = setInterval(() => {
       loadWaInbox().then(box => {
         if (box.error) return

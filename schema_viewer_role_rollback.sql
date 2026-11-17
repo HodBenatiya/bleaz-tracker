@@ -8,8 +8,8 @@
 -- Does not delete reports, candidates, positions, or any other CRM row.
 -- Does not touch schema.sql, schema_v2.sql, or schema_wa.sql.
 --
--- Anon access to wa_inbox is not recreated. schema_auth_rls.sql already
--- limited that table to signed-in users, and WAHA ingest uses the service role.
+-- Anon access is not recreated. Production storage has these six policies,
+-- all for authenticated, and none for anon. WAHA ingest uses the service role.
 
 -- ── tables: put the old open policies back ──────────────────────────────────
 
@@ -42,7 +42,7 @@ begin
   end loop;
 end $$;
 
--- ── storage: previous authenticated + anon wa-media policies ───────────────
+-- ── storage: the six policies production has today, none for anon ───────────
 
 do $$
 declare
@@ -64,18 +64,6 @@ begin
     execute format('drop policy if exists %I on storage.objects', pol.policyname);
   end loop;
 end $$;
-
-create policy "wa media anon upload"
-  on storage.objects for insert to anon, authenticated
-  with check (bucket_id = 'wa-media');
-
-create policy "wa media anon update"
-  on storage.objects for update to anon, authenticated
-  using (bucket_id = 'wa-media');
-
-create policy "wa media anon read"
-  on storage.objects for select to anon, authenticated
-  using (bucket_id = 'wa-media');
 
 create policy "wa media authenticated read"
   on storage.objects for select to authenticated

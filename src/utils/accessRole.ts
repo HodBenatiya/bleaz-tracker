@@ -8,8 +8,8 @@ export const VIEWER_EMAIL = 'natalie@nona-jobs.com'
 /** Hard cap for one viewer_read_page call. Matches the SQL function. */
 export const VIEWER_PAGE_SIZE = 50
 
-/** Screens that write, export, or read tables the viewer must not query. */
-export const VIEWER_HIDDEN_VIEWS = ['form', 'whatsapp', 'meta'] as const
+/** Screens hidden from a viewer. None: WhatsApp, the daily report, and Meta Ads stay visible and read-only. */
+export const VIEWER_HIDDEN_VIEWS = [] as const
 
 export type ViewerHiddenView = (typeof VIEWER_HIDDEN_VIEWS)[number]
 

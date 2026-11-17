@@ -10,6 +10,7 @@ import {
   todayISO, toISODate, formatDateHe, calcCostPerLead, formatCurrency,
   generateId, newEmptyReport, reportForDate,
 } from '../utils/helpers'
+import { useCanEdit } from '../access/AccessContext'
 import MetaSync from './MetaSync'
 import MetaCsvImport from './MetaCsvImport'
 import { loadMetaCredentials } from '../utils/metaApi'
@@ -54,6 +55,7 @@ function numInput(value: number, onChange: (v: number) => void, label: string, s
 }
 
 export default function DailyForm({ reports, savedPositions, pipeline, editingReport, onSave, onGoToPositions }: Props) {
+  const canEdit = useCanEdit()
 
   function initForm(): DailyReport {
     // Fix: if no editingReport, load today's saved report (not empty)
@@ -157,6 +159,7 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
         </button>
       </div>
 
+      <fieldset disabled={!canEdit} className="border-0 p-0 m-0 min-w-0">
       {/* ── הוד — משרות קמפיינים ── */}
       <div className="card mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -167,12 +170,15 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
             הוד — שיווק וגיוס מועמדים
           </h2>
           <div className="flex items-center gap-2">
+            {canEdit && (
             <button
               onClick={() => setShowMetaCsv(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition"
             >
               <Upload size={13} /> ייבא CSV
             </button>
+            )}
+            {canEdit && (
             <button
               onClick={() => setShowMetaSync(true)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
@@ -184,6 +190,7 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
               <Zap size={13} />
               {metaConnected ? 'טען מ-Meta' : 'חבר Meta'}
             </button>
+            )}
             <button onClick={onGoToPositions} className="btn-secondary !px-3 !py-1.5 text-xs">
               <Settings size={13} /> ניהול משרות
             </button>
@@ -280,9 +287,11 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
                           {cpl > 0 ? formatCurrency(cpl) : '—'}
                         </p>
                       </div>
+                      {canEdit && (
                       <button onClick={() => removeAdHocJob(job.id)} className="btn-danger text-xs flex items-center justify-center gap-1">
                         <Trash2 size={12} /> הסר
                       </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -291,9 +300,11 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
           </div>
         )}
 
+        {canEdit && (
         <button onClick={addAdHocJob} className="btn-secondary w-full !justify-center text-sm">
           <Plus size={14} /> הוסף משרה חד-פעמית
         </button>
+        )}
 
         {/* Daily totals bar */}
         {(totalLeads > 0 || totalCost > 0) && (
@@ -374,9 +385,11 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
         <div>
           <div className="flex items-center justify-between mb-3">
             <label className="label !mb-0">לקוחות פעילים — סטטוס</label>
+            {canEdit && (
             <button onClick={addClient} className="btn-secondary !px-3 !py-1.5 text-xs">
               <Plus size={14} /> הוסף
             </button>
+            )}
           </div>
           {form.activeClients.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-xl">אין לקוחות פעילים</p>
@@ -394,7 +407,7 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
                     <input type="text" className="input-field text-sm" placeholder="הערה"
                       value={c.notes} onChange={e => updateClient(c.id, { notes: e.target.value })} />
                   </div>
-                  <button onClick={() => removeClient(c.id)} className="btn-danger shrink-0"><Trash2 size={14} /></button>
+                  {canEdit && <button onClick={() => removeClient(c.id)} className="btn-danger shrink-0"><Trash2 size={14} /></button>}
                 </div>
               ))}
             </div>
@@ -409,6 +422,7 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
           value={form.generalNotes} onChange={e => set('generalNotes', e.target.value)} />
       </div>
 
+      {canEdit && (
       <div className="flex justify-center">
         <button onClick={handleSave} className="btn-primary text-base px-8 py-3">
           {saved
@@ -416,8 +430,10 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
             : <><Save size={20} /> שמור דיווח יומי</>}
         </button>
       </div>
+      )}
+      </fieldset>
 
-      {showMetaSync && (
+      {canEdit && showMetaSync && (
         <MetaSync
           date={form.date}
           savedPositions={savedPositions}
@@ -427,7 +443,7 @@ export default function DailyForm({ reports, savedPositions, pipeline, editingRe
         />
       )}
 
-      {showMetaCsv && (
+      {canEdit && showMetaCsv && (
         <MetaCsvImport
           savedPositions={savedPositions}
           currentJobs={form.jobs}

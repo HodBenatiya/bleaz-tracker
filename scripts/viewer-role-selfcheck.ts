@@ -42,13 +42,13 @@ assert.equal(VIEWER_PAGE_SIZE, 50)
 
 assert.equal(viewAllowed('admin', 'whatsapp'), true)
 assert.equal(viewAllowed('admin', 'form'), true)
-assert.equal(viewAllowed('viewer', 'whatsapp'), false)
-assert.equal(viewAllowed('viewer', 'meta'), false)
-assert.equal(viewAllowed('viewer', 'form'), false)
-for (const view of ['management', 'dashboard', 'board', 'candidates', 'data', 'positions', 'marketing', 'pipeline', 'tasks', 'history']) {
+assert.equal(viewAllowed('viewer', 'whatsapp'), true)
+assert.equal(viewAllowed('viewer', 'meta'), true)
+assert.equal(viewAllowed('viewer', 'form'), true)
+for (const view of ['management', 'dashboard', 'board', 'candidates', 'data', 'positions', 'marketing', 'pipeline', 'tasks', 'history', 'form', 'whatsapp', 'meta']) {
   assert.equal(viewAllowed('viewer', view), true, view)
 }
-assert.deepEqual([...VIEWER_HIDDEN_VIEWS], ['form', 'whatsapp', 'meta'])
+assert.deepEqual([...VIEWER_HIDDEN_VIEWS], [])
 
 assert.equal(blockViewerExtract('viewer', 'copy'), true)
 assert.equal(blockViewerExtract('viewer', 'cut'), true)
@@ -90,10 +90,10 @@ const tsMatch = reader.match(/export const VIEWER_TABLES = \[([\s\S]*?)\] as con
 assert.ok(tsMatch, 'VIEWER_TABLES missing')
 const tsTables = [...tsMatch[1].matchAll(/'([a-z0-9_]+)'/g)].map(match => match[1])
 assert.deepEqual(sqlTables, tsTables)
-for (const denied of ['wa_inbox', 'meta_sync_log', 'meta_sync_state', 'meta_status_history', 'user_roles', 'viewer_access_log']) {
+for (const denied of ['meta_sync_log', 'meta_sync_state', 'meta_status_history', 'user_roles', 'viewer_access_log']) {
   assert.equal(sqlTables.includes(denied), false, denied)
 }
-for (const required of ['reports', 'positions', 'candidates', 'meta_campaign_daily', 'meta_ad_accounts']) {
+for (const required of ['reports', 'positions', 'candidates', 'wa_inbox', 'meta_campaign_daily', 'meta_ad_accounts']) {
   assert.equal(sqlTables.includes(required), true, required)
 }
 
@@ -118,10 +118,22 @@ for (const line of selectLines) {
   assert.equal(line.includes('token_env'), false, line)
 }
 
+assert.doesNotMatch(sqlOnly, /create policy[\s\S]{0,120}to anon/)
+const rollbackSql = rollback.split('\n').filter(line => !line.trim().startsWith('--')).join('\n')
+const rollbackPolicies = [...rollbackSql.matchAll(/create policy "([^"]+)"/g)].map(match => match[1])
+assert.deepEqual(rollbackPolicies, [
+  'wa media authenticated read',
+  'wa media authenticated write',
+  'cvs_authenticated_select',
+  'cvs_authenticated_insert',
+  'cvs_authenticated_update',
+  'cvs_authenticated_delete',
+])
+assert.doesNotMatch(rollbackSql, /to anon/)
+
 assert.match(rollback, /drop table if exists public\.viewer_access_log/)
 assert.match(rollback, /drop table if exists public\.user_roles/)
 assert.match(rollback, /using \(true\)/)
-const rollbackSql = rollback.split('\n').filter(line => !line.trim().startsWith('--')).join('\n')
 assert.doesNotMatch(rollbackSql, /drop table if exists public\.(reports|candidates|positions|tasks|wa_inbox)/i)
 assert.doesNotMatch(rollbackSql, /delete from/i)
 

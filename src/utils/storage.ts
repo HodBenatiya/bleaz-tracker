@@ -234,14 +234,11 @@ export interface WaInboxLoad {
   error: string | null
 }
 
-export async function loadWaInbox(): Promise<WaInboxLoad> {
-  if (isViewer()) return { rows: [], session: null, error: null }
-  const { data, error } = await supabase.from('wa_inbox').select('data').order('updated_at', { ascending: false })
-  if (error) return { rows: [], session: null, error: error.message }
+function parseWaInbox(data: { data: WaInboxLead & Partial<WaSessionState> }[]): WaInboxLoad {
   const rows: WaInboxLead[] = []
   let session: WaSessionState | null = null
-  for (const row of data ?? []) {
-    const item = row.data as (WaInboxLead & Partial<WaSessionState>) | null
+  for (const row of data) {
+    const item = present(row.data)
     if (!item || typeof item !== 'object') continue
     if (item.id === 'wa_session' || item.kind === 'session') {
       session = item as WaSessionState
@@ -250,6 +247,14 @@ export async function loadWaInbox(): Promise<WaInboxLoad> {
     rows.push(item)
   }
   return { rows, session, error: null }
+}
+
+export async function loadWaInbox(): Promise<WaInboxLoad> {
+  const paged = await viewerRows<{ data: WaInboxLead & Partial<WaSessionState> }>('wa_inbox')
+  if (paged) return parseWaInbox(paged)
+  const { data, error } = await supabase.from('wa_inbox').select('data').order('updated_at', { ascending: false })
+  if (error) return { rows: [], session: null, error: error.message }
+  return parseWaInbox((data ?? []).map(row => ({ data: row.data as WaInboxLead & Partial<WaSessionState> })))
 }
 
 export async function markCandidateWaRead(id: string): Promise<Candidate | null> {

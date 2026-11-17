@@ -8,6 +8,7 @@ export const VIEWER_TABLES = [
   'pipeline_companies',
   'tasks',
   'candidates',
+  'wa_inbox',
   'meta_campaign_daily',
   'meta_campaign_today',
   'meta_campaigns',

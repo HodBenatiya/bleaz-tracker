@@ -5,6 +5,7 @@ import { CANDIDATE_STATUS_COLORS } from '../types'
 import CandidateFormModal from './CandidateFormModal'
 import { applyCandidateSave, emptyCandidate } from '../utils/candidateSave'
 import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/storage'
+import { useCanEdit } from '../access/AccessContext'
 import { authFetch } from '../utils/authFetch'
 import { noteLeadKey } from '../utils/noteDraft'
 import { buildWaThreads, mergeWaMessages, personName, phoneKey, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
@@ -105,6 +106,7 @@ function WaInboxScreen({
   candidates, positions, inbox, session, inboxError,
   onCandidatesChange, onPatchCandidate, onPatchInbox, onRefreshInbox,
 }: Props) {
+  const canEdit = useCanEdit()
   const preview = previewOn()
   const shownCandidates = preview && candidates.length === 0 ? previewCandidates() : candidates
   const shownInbox = preview && inbox.length === 0 ? previewInbox() : inbox
@@ -154,7 +156,7 @@ function WaInboxScreen({
   const tableError = setupError(inboxError)
 
   useEffect(() => {
-    if (preview) return
+    if (preview || !canEdit) return
     let cancelled = false
     ;(async () => {
       try {
@@ -163,14 +165,14 @@ function WaInboxScreen({
       if (!cancelled) onRefreshInbox()
     })()
     return () => { cancelled = true }
-  }, [preview, onRefreshInbox])
+  }, [preview, onRefreshInbox, canEdit])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [selectedKey, selected?.messages.length])
 
   useEffect(() => {
-    if (!selected || selected.unread <= 0 || preview) return
+    if (!selected || selected.unread <= 0 || preview || !canEdit) return
     let cancelled = false
     const run = async () => {
       if (selected.candidate && (selected.candidate.waUnread ?? 0) > 0) {
@@ -184,7 +186,7 @@ function WaInboxScreen({
     }
     run()
     return () => { cancelled = true }
-  }, [selectedKey, selected?.unread, preview])
+  }, [selectedKey, selected?.unread, preview, canEdit])
 
   const appendLocal = (message: WaMessage) => {
     if (!selected) return
@@ -547,7 +549,7 @@ function WaInboxScreen({
 
       <section className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 min-w-0 flex-col`}>
         {!selected && (
-          <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">בחרו שיחה כדי לקרוא ולענות.</div>
+          <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">{canEdit ? 'בחרו שיחה כדי לקרוא ולענות.' : 'בחרו שיחה כדי לקרוא.'}</div>
         )}
         {selected && (
           <>
@@ -560,9 +562,11 @@ function WaInboxScreen({
                 <p className="font-bold truncate">{selected.title}</p>
                 <p className="text-[11px] text-white/80 truncate">{selected.phoneLabel}{selected.candidate?.city ? ` · ${selected.candidate.city}` : ''}</p>
               </div>
+              {canEdit && (
               <button onClick={() => openAssign(selected)} className="bg-white text-[#075e54] text-sm font-bold px-3 py-1.5 rounded-lg">
                 שיוך
               </button>
+              )}
             </header>
 
             <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0" style={{ background: '#efeae2' }}>
@@ -585,6 +589,7 @@ function WaInboxScreen({
               <div ref={endRef} />
             </div>
 
+            {canEdit ? (
             <div className="bg-[#f0f2f5] px-3 py-2 shrink-0">
               {progress && <p className="text-xs text-[#075e54] px-2 pb-1">{progress}</p>}
               {sendError && <p className="text-xs text-red-600 px-2 pb-1">{sendError}</p>}
@@ -672,10 +677,13 @@ function WaInboxScreen({
                 </button>
               </div>
             </div>
+            ) : (
+              <div className="bg-[#f0f2f5] px-3 py-2 text-center text-xs text-slate-500 shrink-0">צפייה בלבד — בלי שליחה או הורדת קבצים</div>
+            )}
           </>
         )}
       </section>
-      {assignDraft && (
+      {canEdit && assignDraft && (
         <CandidateFormModal
           key={assignLeadKey || assignDraft.id}
           initial={assignDraft}
@@ -777,7 +785,29 @@ function useMediaSrc(message: WaMessage): string {
   return src
 }
 
+function mediaLabel(message: WaMessage): string {
+  if (message.fileName) return message.fileName
+  if (message.type === 'image') return 'תמונה'
+  if (message.type === 'sticker') return 'סטיקר'
+  if (message.type === 'video') return 'סרטון'
+  if (message.type === 'audio') return 'הודעה קולית'
+  if (message.type === 'document') return 'קובץ'
+  if (message.type === 'location') return 'מיקום'
+  if (message.type === 'contact') return 'איש קשר'
+  return 'קובץ מצורף'
+}
+
 function Media({ message }: { message: WaMessage }) {
+  const canEdit = useCanEdit()
+  if (!canEdit) {
+    if (message.type === 'text' && !message.fileName) return null
+    if (message.type === 'text') return null
+    return <p className="text-sm text-slate-500">{mediaLabel(message)}</p>
+  }
+  return <AdminMedia message={message} />
+}
+
+function AdminMedia({ message }: { message: WaMessage }) {
   const [zoom, setZoom] = useState(false)
   const [failed, setFailed] = useState(false)
   const src = useMediaSrc(message)
