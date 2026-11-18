@@ -1,7 +1,9 @@
 {
   "rewrites": [
+    { "source": "/jobs", "destination": "/jobs/index.html" },
+    { "source": "/jobs/", "destination": "/jobs/index.html" },
     { "source": "/login", "destination": "/index.html" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|jobs/).*)", "destination": "/index.html" }
   ],
   "functions": {
     "api/remind.ts":          { "maxDuration": 15 },
