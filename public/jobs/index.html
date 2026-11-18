@@ -73,7 +73,7 @@
     main {
       width: min(560px, 100%);
       margin: 0 auto;
-      padding: .15rem 1.05rem calc(var(--cta-h) + 1.35rem + env(safe-area-inset-bottom, 0px));
+      padding: .15rem 1.05rem 1.5rem;
       text-align: center;
     }
     .eyebrow {
@@ -126,15 +126,15 @@
       place-items: center;
     }
     .check svg { width: .78rem; height: .78rem; display: block; }
-    .cta-wrap {
-      position: fixed;
-      right: 0;
-      left: 0;
-      bottom: 0;
-      z-index: 20;
-      padding: .7rem 1.15rem calc(.75rem + env(safe-area-inset-bottom, 0px));
-      background: linear-gradient(to top, #070707 62%, rgba(7,7,7,.88) 86%, rgba(7,7,7,0));
+    .cta-note {
+      margin: .45rem auto 0;
+      max-width: 22rem;
+      font-size: .82rem;
+      font-weight: 500;
+      line-height: 1.35;
+      color: var(--muted);
     }
+    .cta-wrap { display: none; }
     .cta {
       display: flex;
       align-items: center;
@@ -157,6 +157,22 @@
     .cta:hover { background: var(--wa-press); }
     .cta:active { transform: scale(.985); }
     .cta svg { width: 1.45rem; height: 1.45rem; flex: none; }
+    .cta.cta-inline { margin-top: .85rem; }
+    @media (max-width: 699px) {
+      .cta-wrap {
+        display: block;
+        position: fixed;
+        right: 0;
+        left: 0;
+        bottom: 0;
+        z-index: 20;
+        padding: .7rem 1.15rem calc(.75rem + env(safe-area-inset-bottom, 0px));
+        background: linear-gradient(to top, #070707 62%, rgba(7,7,7,.88) 86%, rgba(7,7,7,0));
+      }
+      main {
+        padding-bottom: calc(var(--cta-h) + 1.35rem + env(safe-area-inset-bottom, 0px));
+      }
+    }
     @media (min-width: 700px) {
       .hero { height: 520px; }
       .hero img { object-position: center 22%; }
@@ -191,6 +207,13 @@
         </span>
         <span class="line">שכר: בסיס 8,300 ₪ + בונוסים משמעותיים על סגירות. הממוצע במוקד 17,000–23,000 ₪.</span>
       </li>
+    </ul>
+    <a class="cta cta-inline" href="https://wa.me/972559817733?text=%D7%94%D7%99%D7%99%2C%20%D7%90%D7%A9%D7%9E%D7%97%20%D7%9C%D7%A4%D7%A8%D7%98%D7%99%D7%9D%20%D7%A2%D7%9C%20%D7%9E%D7%A9%D7%A8%D7%AA%20%D7%94%D7%9E%D7%9B%D7%99%D7%A8%D7%95%D7%AA%20%D7%91%D7%99%D7%A8%D7%95%D7%A9%D7%9C%D7%99%D7%9D">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2C6.58 2 2.15 6.4 2.15 11.84c0 1.96.52 3.86 1.5 5.54L2 22l4.78-1.55a10.05 10.05 0 0 0 5.26 1.47h.01c5.46 0 9.89-4.4 9.89-9.84C21.94 6.4 17.5 2 12.04 2zm0 17.98h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-2.84.92.95-2.76-.2-.29a8.14 8.14 0 0 1-1.26-4.36c0-4.5 3.69-8.16 8.23-8.16 4.54 0 8.23 3.66 8.23 8.16 0 4.5-3.69 8.16-8.22 8.16zm4.51-6.11c-.25-.12-1.46-.72-1.69-.8-.23-.08-.39-.12-.56.12-.16.25-.64.8-.78.96-.14.16-.29.18-.54.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.24-1.47-1.38-1.72-.15-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.12-.14.16-.25.25-.41.08-.16.04-.31-.02-.43-.06-.12-.56-1.35-.77-1.85-.2-.48-.41-.42-.56-.42h-.48c-.16 0-.43.06-.65.31-.23.25-.86.84-.86 2.05 0 1.21.88 2.38 1 2.54.12.16 1.73 2.64 4.2 3.7.59.25 1.04.41 1.4.52.59.18 1.12.16 1.54.1.47-.07 1.46-.6 1.66-1.17.21-.58.21-1.07.14-1.17-.06-.11-.23-.18-.48-.3z"/></svg>
+      להתחלת שיחה לקבלת פרטים
+    </a>
+    <p class="cta-note">הלחיצה פותחת שיחת וואטסאפ מיידית עם הודעה מוכנה</p>
+    <ul>
       <li>
         <span class="check" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none"><path d="M3.2 8.4 6.3 11.4 12.8 4.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -256,8 +279,9 @@
         } catch (err) {}
       }
       send('view')
-      var button = document.querySelector('a.cta')
-      if (button) button.addEventListener('click', function () { send('click') })
+      document.querySelectorAll('a.cta').forEach(function (button) {
+        button.addEventListener('click', function () { send('click') })
+      })
       } catch (err) {}
     })()
   </script>
