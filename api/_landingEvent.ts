@@ -16,6 +16,16 @@ export type LandingEventRow = {
   is_fb_inapp: boolean
 }
 
+/** Lead posts always include a name or phone. Those stay on the apply handler. */
+export function isLandingBeacon(input: unknown): boolean {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const body = input as Record<string, unknown>
+  if (body.event_type !== 'view' && body.event_type !== 'click') return false
+  if (typeof body.has_fbclid !== 'boolean') return false
+  if ('name' in body || 'phone' in body) return false
+  return true
+}
+
 /** Allowlisted fields only. Lengths are capped. fbclid's value is never accepted. */
 export function sanitizeLandingEvent(input: unknown): LandingEventRow | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null

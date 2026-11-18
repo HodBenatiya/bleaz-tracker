@@ -1,9 +1,21 @@
 import { db } from './_db.js'
+import handleLandingEvent, { isLandingBeacon } from './_landingEvent.js'
 
 const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
 
+function parsedBody(body: unknown): unknown {
+  if (typeof body !== 'string') return body
+  try { return JSON.parse(body) } catch { return body }
+}
+
 // endpoint פשוט שMake.com / Zapier שולח אליו כשנכנס ליד חדש מפייסבוק
 export default async function handler(req: any, res: any) {
+  const beacon = parsedBody(req.body)
+  if (req.method === 'POST' && isLandingBeacon(beacon)) {
+    req.body = beacon
+    return handleLandingEvent(req, res)
+  }
+
   if (req.method === 'GET') {
     return res.status(200).send(`
       <html dir="rtl"><head><meta charset="utf-8"><title>BLEAZ — ממשק לידים</title>
