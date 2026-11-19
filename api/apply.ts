@@ -1,4 +1,5 @@
 import { db } from './_db.js'
+import handleGoRedirect, { isGoRedirect } from './_goRedirect.js'
 import handleLandingEvent, { isLandingBeacon } from './_landingEvent.js'
 
 const supabase = { from: (...args: Parameters<ReturnType<typeof db>['from']>) => db().from(...args) }
@@ -10,6 +11,9 @@ function parsedBody(body: unknown): unknown {
 
 // endpoint פשוט שMake.com / Zapier שולח אליו כשנכנס ליד חדש מפייסבוק
 export default async function handler(req: any, res: any) {
+  // /go/:jobId rewrite. Only GET and HEAD with ?go= ; lead posts and landing beacons stay below.
+  if (isGoRedirect(req)) return handleGoRedirect(req, res)
+
   const beacon = parsedBody(req.body)
   if (req.method === 'POST' && isLandingBeacon(beacon)) {
     req.body = beacon
