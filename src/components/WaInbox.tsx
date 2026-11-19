@@ -8,6 +8,7 @@ import { linkWaInbox, markCandidateWaRead, markWaInboxRead } from '../utils/stor
 import { useCanEdit } from '../access/AccessContext'
 import { authFetch } from '../utils/authFetch'
 import { noteLeadKey } from '../utils/noteDraft'
+import { tagNewOrganicLead } from '../utils/organicJobs'
 import { buildWaThreads, mergeWaMessages, personName, phoneKey, screeningNoteFields, toLocalPhone, type WaThread } from '../utils/wa'
 
 interface Props {
@@ -426,13 +427,13 @@ function WaInboxScreen({
         setNoteDrafting(false)
       }
     } else {
-      setAssignDraft({
+      setAssignDraft(tagNewOrganicLead({
         ...emptyCandidate(),
         name: personName(thread.title, phone),
         phone,
         source: 'WhatsApp',
         notes: '',
-      })
+      }, thread.messages))
       setAssignEditing(false)
       setNoteDrafting(true)
       void requestNoteDraft(thread, false)

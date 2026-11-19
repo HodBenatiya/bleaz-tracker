@@ -1,4 +1,5 @@
 import { db } from './_db.js'
+import { sanitizeVariant, withJobNameLine } from '../src/utils/organicJobs.js'
 
 /** Public WhatsApp number for /go links. Do not add any other number here. */
 export const WA_PHONE = '972559817733'
@@ -59,7 +60,7 @@ export function whatsappLocation(jobId: number | null): string {
   if (jobId == null) return PLAIN_WA_URL
   const text = GO_JOB_TEXTS[jobId]
   if (!text) return PLAIN_WA_URL
-  return `${PLAIN_WA_URL}?text=${encodeURIComponent(text)}`
+  return `${PLAIN_WA_URL}?text=${encodeURIComponent(withJobNameLine(jobId, text))}`
 }
 
 export function shouldRecordGoClick(method: string | undefined, jobId: number | null): boolean {
@@ -80,12 +81,12 @@ export function queryParam(req: GoRequest, key: string): string | null {
  * One row per counted GET. Failures (missing table, network, bad env) are logged
  * and swallowed so the redirect already sent still stands.
  */
-export async function recordGoClick(jobId: number, groupId: string | null): Promise<void> {
+export async function recordGoClick(jobId: number, groupId: string | null, variant: string | null): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const pending = db()
       .from('go_clicks')
-      .insert({ job_id: jobId, group_id: groupId })
+      .insert({ job_id: jobId, group_id: groupId, variant })
       .then(({ error }) => {
         if (error) console.error('go click insert failed:', error.message)
       }, (err: unknown) => {
@@ -107,15 +108,16 @@ export async function recordGoClick(jobId: number, groupId: string | null): Prom
 export default async function handleGoRedirect(
   req: GoRequest,
   res: GoResponse,
-  record: (jobId: number, groupId: string | null) => Promise<void> = recordGoClick,
+  record: (jobId: number, groupId: string | null, variant: string | null) => Promise<void> = recordGoClick,
 ): Promise<void> {
   const jobId = parseJobId(queryParam(req, 'go'))
   const groupId = sanitizeGroupId(queryParam(req, 'g'))
+  const variant = sanitizeVariant(queryParam(req, 'v'))
   res.statusCode = 302
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('Location', whatsappLocation(jobId))
   res.end()
-  if (jobId != null && shouldRecordGoClick(req.method, jobId)) await record(jobId, groupId)
+  if (jobId != null && shouldRecordGoClick(req.method, jobId)) await record(jobId, groupId, variant)
 }
 
 function coerceQueryValue(raw: unknown): string {

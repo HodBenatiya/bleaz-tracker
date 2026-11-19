@@ -15,6 +15,7 @@ import handleGoRedirect, {
   shouldRecordGoClick,
   whatsappLocation,
 } from '../api/_goRedirect.ts'
+import { sanitizeVariant, withJobNameLine } from '../src/utils/organicJobs.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -34,15 +35,19 @@ const EXPECTED: Record<string, string> = {
 assert.equal(WA_PHONE, '972559817733')
 assert.equal(PLAIN_WA_URL, 'https://wa.me/972559817733')
 
+const NAMED_JOBS = new Set([2, 9, 10])
 for (const key of Object.keys(EXPECTED)) {
   const jobId = Number(key)
+  const text = withJobNameLine(jobId, EXPECTED[key])
   assert.equal(GO_JOB_TEXTS[jobId], EXPECTED[key])
   const location = whatsappLocation(jobId)
-  assert.equal(location, `${PLAIN_WA_URL}?text=${encodeURIComponent(EXPECTED[key])}`)
-  assert.equal(decodeURIComponent(location.slice(location.indexOf('?text=') + 6)), EXPECTED[key])
+  assert.equal(location, `${PLAIN_WA_URL}?text=${encodeURIComponent(text)}`)
+  assert.equal(decodeURIComponent(location.slice(location.indexOf('?text=') + 6)), text)
   assert.equal(location.includes('\n'), false)
-  assert.equal((location.match(/%0A/g) || []).length, 2)
+  assert.equal((location.match(/%0A/g) || []).length, NAMED_JOBS.has(jobId) ? 3 : 2)
   assert.equal(location.startsWith('https://wa.me/972559817733?text='), true)
+  if (NAMED_JOBS.has(jobId)) assert.equal(text.startsWith(`משרה: `), true)
+  else assert.equal(text, EXPECTED[key])
 }
 
 assert.equal(GO_JOB_TEXTS[6].includes('\u05F4'), true)
@@ -57,6 +62,10 @@ for (const raw of [null, '', '0', '01', '11', '99', 'abc', '1.5', '1 ', ' 1', '1
 for (let jobId = 1; jobId <= 10; jobId += 1) {
   assert.equal(parseJobId(String(jobId)), jobId)
 }
+
+assert.equal(sanitizeVariant('A'), 'A')
+assert.equal(sanitizeVariant('D'), 'D')
+for (const raw of [null, '', 'a', 'E', 'AB', '1', ' A']) assert.equal(sanitizeVariant(raw), null)
 
 assert.equal(sanitizeGroupId('test123'), 'test123')
 assert.equal(sanitizeGroupId('A_b-9'), 'A_b-9')
@@ -96,19 +105,19 @@ function mockRes() {
   return res
 }
 
-const recorded: Array<{ jobId: number; groupId: string | null }> = []
-async function fakeRecord(jobId: number, groupId: string | null) {
-  recorded.push({ jobId, groupId })
+const recorded: Array<{ jobId: number; groupId: string | null; variant: string | null }> = []
+async function fakeRecord(jobId: number, groupId: string | null, variant: string | null) {
+  recorded.push({ jobId, groupId, variant })
 }
 
 {
   recorded.length = 0
   const res = mockRes()
-  await handleGoRedirect({ method: 'GET', query: { go: '4', g: 'test123' } }, res, fakeRecord)
+  await handleGoRedirect({ method: 'GET', query: { go: '4', g: 'test123', v: 'B' } }, res, fakeRecord)
   assert.equal(res.statusCode, 302)
   assert.equal(res.headers['Cache-Control'], 'no-store')
   assert.equal(res.headers.Location, whatsappLocation(4))
-  assert.deepEqual(recorded, [{ jobId: 4, groupId: 'test123' }])
+  assert.deepEqual(recorded, [{ jobId: 4, groupId: 'test123', variant: 'B' }])
 }
 
 {
@@ -135,7 +144,7 @@ async function fakeRecord(jobId: number, groupId: string | null) {
   const res = mockRes()
   await handleGoRedirect({ method: 'GET', query: { go: '1', g: 'bad group' } }, res, fakeRecord)
   assert.equal(res.headers.Location, whatsappLocation(1))
-  assert.deepEqual(recorded, [{ jobId: 1, groupId: null }])
+  assert.deepEqual(recorded, [{ jobId: 1, groupId: null, variant: null }])
 }
 
 {
@@ -191,7 +200,7 @@ async function fakeRecord(jobId: number, groupId: string | null) {
   assert.equal(res.body.includes('POST /api/apply'), true)
 }
 
-for (const rel of ['api/_goRedirect.ts', 'api/apply.ts', 'vercel.json', 'schema_go_clicks.sql']) {
+for (const rel of ['api/_goRedirect.ts', 'api/apply.ts', 'vercel.json', 'schema_go_clicks.sql', 'schema_go_clicks_variant.sql', 'schema_organic_leads.sql', 'src/utils/organicJobs.ts']) {
   const source = readFileSync(join(root, rel), 'utf8')
   const runs = source.match(/\d{7,}/g) ?? []
   assert.deepEqual(runs.filter((run) => run !== '972559817733'), [], rel)
@@ -242,7 +251,7 @@ if (!process.env.VITE_SUPABASE_URL && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     assert.equal(counted.statusCode, 302)
     assert.equal(counted.headers.Location, whatsappLocation(3))
     assert.equal(errors.length, 1)
-    await recordGoClick(5, 'ok')
+    await recordGoClick(5, 'ok', 'A')
     assert.equal(errors.length, 2)
     assert.equal(errors.every((line) => line.includes('missing supabase service role')), true)
     const invalid = mockRes()
