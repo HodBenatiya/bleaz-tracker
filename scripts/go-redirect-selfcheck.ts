@@ -15,44 +15,42 @@ import handleGoRedirect, {
   shouldRecordGoClick,
   whatsappLocation,
 } from '../api/_goRedirect.ts'
-import { sanitizeVariant, withJobNameLine } from '../src/utils/organicJobs.ts'
+import { matchOrganicJob, sanitizeVariant } from '../src/utils/organicJobs.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const EXPECTED: Record<string, string> = {
-  '1': 'היי, ראיתי בפייסבוק את משרת קשרי הלקוחות בבית ההשקעות ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nידע/ניסיון בשוק ההון:',
-  '2': 'היי, ראיתי בפייסבוק את משרת שירות הלקוחות בחברת הביטוח ברמת החייל ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות:',
-  '3': 'היי, ראיתי בפייסבוק את משרת השירות במוקד המעסיקים בפתח תקווה ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות:',
-  '4': 'היי, ראיתי בפייסבוק את משרת המכירות במוקד הפיננסי בגבעת שאול ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון במכירות טלפוניות (כמה זמן ואיפה):',
-  '5': 'היי, ראיתי בפייסבוק את משרת תומך/ת המסחר בשוק ההון ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות / ידע בשוק ההון:',
-  '6': 'היי, ראיתי בפייסבוק את משרת מנהל/ת החשבונות מהבית ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nשנות ניסיון במשרד רו\u05F4ח (עד מאזן?):',
-  '7': 'היי, ראיתי בפייסבוק את משרת יועץ/ת ההשקעות ג\u05F3וניור בבנק בתל אביב ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nרישיון ייעוץ השקעות + התמחות (מתי הושלמה):',
-  '8': 'היי, ראיתי בפייסבוק את משרת המכירות במכללה ברמת גן ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון במכירות (אם יש):',
-  '9': 'היי, ראיתי בפייסבוק את משרת שימור הלקוחות בפתח תקווה ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון במכירות או שירות (אם יש):',
-  '10': 'היי, ראיתי בפייסבוק את משרת השירות במוקד המעסיקים בבאר שבע ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות:',
+  '1': 'היי, אשמח לקבל פרטים על משרת קשרי לקוחות בבית השקעות',
+  '2': 'היי, אשמח לקבל פרטים על משרת שירות לקוחות ברמת החייל',
+  '3': 'היי, אשמח לקבל פרטים על משרת שירות במוקד מעסיקים בפתח תקווה',
+  '4': 'היי, אשמח לקבל פרטים על משרת מכירות במוקד פיננסי בגבעת שאול',
+  '5': 'היי, אשמח לקבל פרטים על משרת תומך/ת מסחר בשוק ההון',
+  '6': 'היי, אשמח לקבל פרטים על משרת הנהלת חשבונות מהבית',
+  '7': 'היי, אשמח לקבל פרטים על משרת יועץ/ת השקעות ג\u05F3וניור בתל אביב',
+  '8': 'היי, אשמח לקבל פרטים על משרת מכירות ברמת גן',
+  '9': 'היי, אשמח לקבל פרטים על משרת שימור לקוחות בפתח תקווה',
+  '10': 'היי, אשמח לקבל פרטים על משרת שירות לקוחות בבאר שבע',
 }
 
 assert.equal(WA_PHONE, '972559817733')
 assert.equal(PLAIN_WA_URL, 'https://wa.me/972559817733')
 
-const NAMED_JOBS = new Set([2, 9, 10])
 for (const key of Object.keys(EXPECTED)) {
   const jobId = Number(key)
-  const text = withJobNameLine(jobId, EXPECTED[key])
-  assert.equal(GO_JOB_TEXTS[jobId], EXPECTED[key])
+  const text = EXPECTED[key]
+  assert.equal(GO_JOB_TEXTS[jobId], text)
+  assert.equal(text.includes('\n'), false)
+  assert.equal(text.includes('משרה:'), false)
   const location = whatsappLocation(jobId)
   assert.equal(location, `${PLAIN_WA_URL}?text=${encodeURIComponent(text)}`)
   assert.equal(decodeURIComponent(location.slice(location.indexOf('?text=') + 6)), text)
   assert.equal(location.includes('\n'), false)
-  assert.equal((location.match(/%0A/g) || []).length, NAMED_JOBS.has(jobId) ? 3 : 2)
+  assert.equal(location.includes('%0A'), false)
   assert.equal(location.startsWith('https://wa.me/972559817733?text='), true)
-  if (NAMED_JOBS.has(jobId)) assert.equal(text.startsWith(`משרה: `), true)
-  else assert.equal(text, EXPECTED[key])
+  assert.equal(matchOrganicJob(text), jobId)
 }
 
-assert.equal(GO_JOB_TEXTS[6].includes('\u05F4'), true)
 assert.equal(GO_JOB_TEXTS[7].includes('\u05F3'), true)
-assert.equal(whatsappLocation(7).includes('%2B'), true)
 assert.equal(whatsappLocation(7).includes('+'), false)
 
 for (const raw of [null, '', '0', '01', '11', '99', 'abc', '1.5', '1 ', ' 1', '10abc']) {
