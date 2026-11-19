@@ -103,9 +103,9 @@ function mockRes() {
   return res
 }
 
-const recorded: Array<{ jobId: number; groupId: string | null; variant: string | null }> = []
-async function fakeRecord(jobId: number, groupId: string | null, variant: string | null) {
-  recorded.push({ jobId, groupId, variant })
+const recorded: Array<{ jobId: number; groupId: string | null; variant: string | null; isBot: boolean }> = []
+async function fakeRecord(jobId: number, groupId: string | null, variant: string | null, isBot: boolean) {
+  recorded.push({ jobId, groupId, variant, isBot })
 }
 
 {
@@ -114,15 +114,15 @@ async function fakeRecord(jobId: number, groupId: string | null, variant: string
   const res = mockRes()
   const finish = res.end
   res.end = () => { order.push('end'); return finish() }
-  await handleGoRedirect({ method: 'GET', query: { go: '4', g: 'test123', v: 'B' } }, res, async (jobId, groupId, variant) => {
+  await handleGoRedirect({ method: 'GET', query: { go: '4', g: 'test123', v: 'B' } }, res, async (jobId, groupId, variant, isBot) => {
     order.push('record')
-    await fakeRecord(jobId, groupId, variant)
+    await fakeRecord(jobId, groupId, variant, isBot)
   })
   assert.deepEqual(order, ['record', 'end'])
   assert.equal(res.statusCode, 302)
   assert.equal(res.headers['Cache-Control'], 'no-store')
   assert.equal(res.headers.Location, whatsappLocation(4))
-  assert.deepEqual(recorded, [{ jobId: 4, groupId: 'test123', variant: 'B' }])
+  assert.deepEqual(recorded, [{ jobId: 4, groupId: 'test123', variant: 'B', isBot: true }])
 }
 
 {
@@ -161,7 +161,34 @@ async function fakeRecord(jobId: number, groupId: string | null, variant: string
   const res = mockRes()
   await handleGoRedirect({ method: 'GET', query: { go: '1', g: 'bad group' } }, res, fakeRecord)
   assert.equal(res.headers.Location, whatsappLocation(1))
-  assert.deepEqual(recorded, [{ jobId: 1, groupId: null, variant: null }])
+  assert.deepEqual(recorded, [{ jobId: 1, groupId: null, variant: null, isBot: true }])
+}
+
+{
+  recorded.length = 0
+  const res = mockRes()
+  const human = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+  await handleGoRedirect({
+    method: 'GET',
+    query: { go: '9', v: 'A', g: 'group' },
+    headers: { 'user-agent': human, 'accept-language': 'he-IL,he;q=0.9' },
+  }, res, fakeRecord)
+  assert.equal(res.statusCode, 302)
+  assert.equal(res.headers.Location, whatsappLocation(9))
+  assert.deepEqual(recorded, [{ jobId: 9, groupId: 'group', variant: 'A', isBot: false }])
+}
+
+{
+  recorded.length = 0
+  const res = mockRes()
+  await handleGoRedirect({
+    method: 'GET',
+    query: { go: '9', g: 'f' },
+    headers: { 'user-agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)' },
+  }, res, fakeRecord)
+  assert.equal(res.statusCode, 302)
+  assert.equal(res.headers.Location, whatsappLocation(9))
+  assert.deepEqual(recorded, [{ jobId: 9, groupId: 'f', variant: null, isBot: true }])
 }
 
 {
@@ -268,7 +295,7 @@ if (!process.env.VITE_SUPABASE_URL && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     assert.equal(counted.statusCode, 302)
     assert.equal(counted.headers.Location, whatsappLocation(3))
     assert.equal(errors.length, 1)
-    await recordGoClick(5, 'ok', 'A')
+    await recordGoClick(5, 'ok', 'A', true)
     assert.equal(errors.length, 2)
     assert.equal(errors.every((line) => line.includes('missing supabase service role')), true)
     const invalid = mockRes()
