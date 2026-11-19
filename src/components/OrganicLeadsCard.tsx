@@ -14,6 +14,7 @@ type ClickRow = {
   variant: string | null
   group_id: string | null
   created_at: string
+  is_bot?: boolean
 }
 
 export interface ClickSummary {
@@ -41,6 +42,7 @@ export function summarizeGoClicks(rows: ClickRow[], now = new Date()): ClickSumm
   const grouped = new Map<string, ClickSummary>()
   for (const row of rows) {
     const day = jerusalemDay(row.created_at)
+    if (row.is_bot) continue
     if (!day || !days.has(day)) continue
     const variant = row.variant || null
     const groupId = row.group_id || null
@@ -100,7 +102,7 @@ export function OrganicLeadsCardView({
       )}
       {clicksState === 'loading' && <p className="text-sm text-slate-400 mt-4">טוען לחיצות…</p>}
       {clicksState === 'missing' && (
-        <p className="text-sm text-slate-400 mt-4">לחיצות /go יופיעו אחרי schema_go_clicks.sql ואז schema_go_clicks_variant.sql</p>
+        <p className="text-sm text-slate-400 mt-4">לחיצות /go יופיעו אחרי schema_go_clicks.sql, schema_go_clicks_variant.sql ו-schema_go_clicks_bot.sql</p>
       )}
       {clicksState === 'ready' && clicks && clicks.length === 0 && (
         <p className="text-sm text-slate-400 mt-4">אין לחיצות /go ב-14 הימים האחרונים</p>
@@ -147,7 +149,8 @@ export default function OrganicLeadsCard({ candidates }: { candidates: Candidate
     const since = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
     supabase
       .from('go_clicks')
-      .select('job_id, variant, group_id, created_at')
+      .select('job_id, variant, group_id, created_at, is_bot')
+      .eq('is_bot', false)
       .gte('created_at', since)
       .then(({ data, error }) => {
         if (cancelled) return

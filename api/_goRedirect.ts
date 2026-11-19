@@ -1,4 +1,5 @@
 import { db } from './_db.js'
+import { isBotUserAgent } from '../src/utils/goBot.js'
 import { sanitizeVariant } from '../src/utils/organicJobs.js'
 
 /** Public WhatsApp number for /go links. Do not add any other number here. */
@@ -31,6 +32,7 @@ export type GoRequest = {
   method?: string
   url?: string
   query?: unknown
+  headers?: Record<string, string | string[] | undefined>
 }
 
 export type GoResponse = {
@@ -82,12 +84,17 @@ export function queryParam(req: GoRequest, key: string): string | null {
  * The caller awaits this before the redirect, capped at 800ms, so Vercel
  * does not freeze the isolate before the insert finishes.
  */
-export async function recordGoClick(jobId: number, groupId: string | null, variant: string | null): Promise<void> {
+export async function recordGoClick(
+  jobId: number,
+  groupId: string | null,
+  variant: string | null,
+  isBot: boolean,
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const pending = db()
       .from('go_clicks')
-      .insert({ job_id: jobId, group_id: groupId, variant })
+      .insert({ job_id: jobId, group_id: groupId, variant, is_bot: isBot })
       .then(({ error }) => {
         if (error) console.error('go click insert failed:', error.message)
       }, (err: unknown) => {
@@ -109,18 +116,27 @@ export async function recordGoClick(jobId: number, groupId: string | null, varia
 export default async function handleGoRedirect(
   req: GoRequest,
   res: GoResponse,
-  record: (jobId: number, groupId: string | null, variant: string | null) => Promise<void> = recordGoClick,
+  record: (jobId: number, groupId: string | null, variant: string | null, isBot: boolean) => Promise<void> = recordGoClick,
 ): Promise<void> {
   const jobId = parseJobId(queryParam(req, 'go'))
   const groupId = sanitizeGroupId(queryParam(req, 'g'))
   const variant = sanitizeVariant(queryParam(req, 'v'))
   if (jobId != null && shouldRecordGoClick(req.method, jobId)) {
-    await record(jobId, groupId, variant)
+    await record(jobId, groupId, variant, isBotUserAgent(headerValue(req, 'user-agent'), headerValue(req, 'accept-language')))
   }
   res.statusCode = 302
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('Location', whatsappLocation(jobId))
   res.end()
+}
+
+function headerValue(req: GoRequest, name: string): string {
+  const headers = req.headers
+  if (!headers) return ''
+  const found = Object.keys(headers).find(key => key.toLowerCase() === name)
+  const raw = found ? headers[found] : undefined
+  if (Array.isArray(raw)) return String(raw[0] ?? '')
+  return typeof raw === 'string' ? raw : ''
 }
 
 function coerceQueryValue(raw: unknown): string {
