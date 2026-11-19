@@ -112,12 +112,31 @@ async function fakeRecord(jobId: number, groupId: string | null, variant: string
 
 {
   recorded.length = 0
+  const order: string[] = []
   const res = mockRes()
-  await handleGoRedirect({ method: 'GET', query: { go: '4', g: 'test123', v: 'B' } }, res, fakeRecord)
+  const finish = res.end
+  res.end = () => { order.push('end'); return finish() }
+  await handleGoRedirect({ method: 'GET', query: { go: '4', g: 'test123', v: 'B' } }, res, async (jobId, groupId, variant) => {
+    order.push('record')
+    await fakeRecord(jobId, groupId, variant)
+  })
+  assert.deepEqual(order, ['record', 'end'])
   assert.equal(res.statusCode, 302)
   assert.equal(res.headers['Cache-Control'], 'no-store')
   assert.equal(res.headers.Location, whatsappLocation(4))
   assert.deepEqual(recorded, [{ jobId: 4, groupId: 'test123', variant: 'B' }])
+}
+
+{
+  const order: string[] = []
+  const res = mockRes()
+  const finish = res.end
+  res.end = () => { order.push('end'); return finish() }
+  await handleGoRedirect({ method: 'HEAD', query: { go: '9', v: 'A', g: 'devtest_fix' } }, res, async () => {
+    order.push('record')
+  })
+  assert.deepEqual(order, ['end'])
+  assert.equal(res.statusCode, 302)
 }
 
 {
