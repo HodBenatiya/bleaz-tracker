@@ -20,6 +20,7 @@ import { parseProviderWebhook, type ParsedMessage } from '../src/utils/waParse.j
 import { db } from './_db.js'
 import { downloadIncomingMedia, fetchWahaContactCard, providerName, redactError, resolveWahaPhone } from './_provider.js'
 import { captureTaskCommand } from './_tasks.js'
+import { matchOrganicJob } from '../src/utils/organicJobs.js'
 
 interface CandidateRow { id: string; data: Candidate }
 
@@ -150,6 +151,8 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
     updatedAt: now,
   }
   const existed = (base.messages ?? []).some(m => m.id === message.id)
+  const hadInbound = (base.messages ?? []).some(m => m.direction === 'in')
+  const matchedJob = !hadInbound && message.direction === 'in' ? matchOrganicJob(message.text) : null
   const messages = mergeWaMessages(base.messages, [message])
   const incomingName = personName(parsed.senderName, phone)
   const keptName = personName(base.name, phone)
@@ -164,6 +167,7 @@ async function appendToInbox(parsed: ParsedMessage, message: WaMessage): Promise
     pushName: incomingName || prev?.pushName,
     name: incomingName || keptName || (unresolved ? '' : phone),
     messages,
+    organicJob: prev?.organicJob ?? matchedJob ?? undefined,
     unread: existed || message.direction !== 'in' ? (base.unread ?? 0) : (base.unread ?? 0) + 1,
     lastMessageAt: messages.length ? messages[messages.length - 1].timestamp : message.timestamp,
     updatedAt: now,

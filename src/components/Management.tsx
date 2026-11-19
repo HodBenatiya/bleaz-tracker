@@ -8,6 +8,7 @@ import { placementGuarantee } from '../utils/guarantee'
 import AttributionMonthField from './AttributionMonthField'
 import GuaranteeBadge from './GuaranteeBadge'
 import LandingStatsCard from './LandingStatsCard'
+import OrganicLeadsCard from './OrganicLeadsCard'
 
 const PLACEMENT_FEE = 5000
 
@@ -212,6 +213,7 @@ export default function Management({ candidates, positions, reports, onCandidate
     <div className="space-y-5 max-w-6xl mx-auto">
 
       <LandingStatsCard />
+      <OrganicLeadsCard candidates={candidates} />
 
       {/* Month navigation */}
       <div className="flex items-center justify-between">

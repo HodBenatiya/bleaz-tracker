@@ -209,6 +209,8 @@ export interface Candidate {
   status: CandidateStatus
   positionType: string      // סוג המשרה
   source: string            // שם הקמפיין / מקור, נשמר גם כטקסט קריא
+  /** Organic Facebook job 1–10, set from the first inbound WhatsApp message. */
+  organicJob?: number
   /** Meta ad account, act_… . Set only when מקור הגעה is a real campaign. */
   metaAccountId?: string
   /** Meta campaign id. Set only when מקור הגעה is a real campaign. */
@@ -289,6 +291,8 @@ export interface WaInboxLead {
   unread: number
   lastMessageAt: string
   candidateId?: string
+  /** Set from the first inbound message when it names an organic Facebook job. */
+  organicJob?: number
   lid?: string
   provider?: 'waha' | 'greenapi'
   phoneUnresolved?: boolean
