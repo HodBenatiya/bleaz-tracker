@@ -1,8 +1,27 @@
 /** Descriptive names for organic Facebook jobs. Add new jobs only here. */
 export const ORGANIC_JOB_NAMES: Record<number, string> = {
+  1: 'קשרי לקוחות בית השקעות',
   2: 'שירות לקוחות רמת החייל',
+  3: 'שירות מוקד מעסיקים פתח תקווה',
+  4: 'מכירות מוקד פיננסי גבעת שאול',
+  5: 'תומך מסחר שוק ההון',
+  6: 'הנהלת חשבונות מהבית',
+  7: 'יועץ השקעות ג׳וניור תל אביב',
+  8: 'מכירות רמת גן',
   9: 'שימור לקוחות פתח תקווה',
   10: 'שירות לקוחות באר שבע',
+}
+
+/**
+ * Extra phrases for messages already in flight. The short names above do not
+ * appear as consecutive words in every older prefill.
+ */
+const ORGANIC_EXTRA_PHRASES: Record<number, string[]> = {
+  2: ['רמת החייל'],
+  6: ['מנהל חשבונות מהבית'],
+  7: ['יועץ השקעות ג׳וניור'],
+  8: ['רמת גן'],
+  10: ['באר שבע'],
 }
 
 export const ORGANIC_SOURCE = 'organic_fb'
@@ -48,6 +67,8 @@ export function normalizeOrganicText(value: string): string {
   return value
     .normalize('NFKC')
     .replace(/[\u0591-\u05C7]/g, '')
+    .replace(/\/ת/g, '')
+    .replace(/[׳״]/g, '')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -59,19 +80,41 @@ function escapeRegExp(value: string): string {
 
 function namePattern(name: string): RegExp {
   const words = normalizeOrganicText(name).split(' ').filter(Boolean)
-  const body = words.map(word => `ו?ב?${escapeRegExp(word)}`).join('\\s+')
-  return new RegExp(body, 'u')
+  const body = words.map(word => `[הוב]{0,2}${escapeRegExp(word)}`).join('\\s+')
+  return new RegExp(`(?:^|\\s)${body}(?=\\s|$)`, 'u')
 }
 
-/** First inbound message only. Optional ו/ב before a name word still matches. */
+function matchPhrases(): Array<{ jobId: number; phrase: string }> {
+  const phrases: Array<{ jobId: number; phrase: string }> = []
+  for (const [id, name] of Object.entries(ORGANIC_JOB_NAMES)) {
+    phrases.push({ jobId: Number(id), phrase: name })
+  }
+  for (const [id, extras] of Object.entries(ORGANIC_EXTRA_PHRASES)) {
+    for (const phrase of extras) phrases.push({ jobId: Number(id), phrase })
+  }
+  return phrases.sort((a, b) => (
+    normalizeOrganicText(b.phrase).length - normalizeOrganicText(a.phrase).length
+    || a.jobId - b.jobId
+  ))
+}
+
+/** Every job whose phrase appears. Longest phrase is not preferred here. */
+export function matchingOrganicJobs(text: string | null | undefined): number[] {
+  const normalized = normalizeOrganicText(text ?? '')
+  if (!normalized) return []
+  const hits = new Set<number>()
+  for (const entry of matchPhrases()) {
+    if (namePattern(entry.phrase).test(normalized)) hits.add(entry.jobId)
+  }
+  return [...hits].sort((a, b) => a - b)
+}
+
+/** First inbound message only. Optional ה/ו/ב before a name word still matches. Longest phrase wins. */
 export function matchOrganicJob(text: string | null | undefined): number | null {
   const normalized = normalizeOrganicText(text ?? '')
   if (!normalized) return null
-  const entries = Object.entries(ORGANIC_JOB_NAMES)
-    .map(([id, name]) => ({ id: Number(id), name }))
-    .sort((a, b) => b.name.length - a.name.length)
-  for (const entry of entries) {
-    if (namePattern(entry.name).test(normalized)) return entry.id
+  for (const entry of matchPhrases()) {
+    if (namePattern(entry.phrase).test(normalized)) return entry.jobId
   }
   return null
 }

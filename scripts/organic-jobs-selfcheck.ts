@@ -4,6 +4,7 @@ import {
   ORGANIC_SOURCE,
   firstInboundText,
   matchOrganicJob,
+  matchingOrganicJobs,
   organicRelevance,
   summarizeOrganicLeads,
   tagNewOrganicLead,
@@ -20,14 +21,63 @@ assert.equal(matchOrganicJob('שימור לקוחות בפתח תקווה'), 9)
 assert.equal(matchOrganicJob('שימור לקוחות פתח תקווה'), 9)
 assert.equal(matchOrganicJob('שלום, אשמח לפרטים'), null)
 assert.equal(matchOrganicJob('שירות לקוחות'), null)
-assert.equal(matchOrganicJob('באר שבע שירות לקוחות'), null)
+assert.equal(matchOrganicJob('שירות לקוחות באר'), null)
+assert.equal(matchOrganicJob('באר שבע שירות לקוחות'), 10)
+
+const SHORT: Record<number, string> = {
+  1: 'היי, אשמח לקבל פרטים על משרת קשרי לקוחות בבית השקעות',
+  2: 'היי, אשמח לקבל פרטים על משרת שירות לקוחות ברמת החייל',
+  3: 'היי, אשמח לקבל פרטים על משרת שירות במוקד מעסיקים בפתח תקווה',
+  4: 'היי, אשמח לקבל פרטים על משרת מכירות במוקד פיננסי בגבעת שאול',
+  5: 'היי, אשמח לקבל פרטים על משרת תומך/ת מסחר בשוק ההון',
+  6: 'היי, אשמח לקבל פרטים על משרת הנהלת חשבונות מהבית',
+  7: 'היי, אשמח לקבל פרטים על משרת יועץ/ת השקעות ג\u05F3וניור בתל אביב',
+  8: 'היי, אשמח לקבל פרטים על משרת מכירות ברמת גן',
+  9: 'היי, אשמח לקבל פרטים על משרת שימור לקוחות בפתח תקווה',
+  10: 'היי, אשמח לקבל פרטים על משרת שירות לקוחות בבאר שבע',
+}
+for (const [id, sentence] of Object.entries(SHORT)) {
+  const jobId = Number(id)
+  assert.deepEqual(matchingOrganicJobs(sentence), [jobId], sentence)
+  assert.equal(matchOrganicJob(sentence), jobId)
+}
+
+const OLD: Record<number, string> = {
+  1: 'היי, ראיתי בפייסבוק את משרת קשרי הלקוחות בבית ההשקעות ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nידע/ניסיון בשוק ההון:',
+  2: 'היי, ראיתי בפייסבוק את משרת שירות הלקוחות בחברת הביטוח ברמת החייל ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות:',
+  3: 'היי, ראיתי בפייסבוק את משרת השירות במוקד המעסיקים בפתח תקווה ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות:',
+  4: 'היי, ראיתי בפייסבוק את משרת המכירות במוקד הפיננסי בגבעת שאול ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון במכירות טלפוניות (כמה זמן ואיפה):',
+  5: 'היי, ראיתי בפייסבוק את משרת תומך/ת המסחר בשוק ההון ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות / ידע בשוק ההון:',
+  6: 'היי, ראיתי בפייסבוק את משרת מנהל/ת החשבונות מהבית ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nשנות ניסיון במשרד רו״ח (עד מאזן?):',
+  7: 'היי, ראיתי בפייסבוק את משרת יועץ/ת ההשקעות ג\u05F3וניור בבנק בתל אביב ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nרישיון ייעוץ השקעות + התמחות (מתי הושלמה):',
+  8: 'היי, ראיתי בפייסבוק את משרת המכירות במכללה ברמת גן ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון במכירות (אם יש):',
+  9: 'היי, ראיתי בפייסבוק את משרת שימור הלקוחות בפתח תקווה ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון במכירות או שירות (אם יש):',
+  10: 'היי, ראיתי בפייסבוק את משרת השירות במוקד המעסיקים בבאר שבע ואשמח לפרטים נוספים ולהגיש מועמדות.\nשם:\nניסיון בשירות לקוחות:',
+}
+for (const [id, sentence] of Object.entries(OLD)) {
+  const jobId = Number(id)
+  assert.deepEqual(matchingOrganicJobs(sentence), [jobId], `old ${id}`)
+  assert.equal(matchOrganicJob(sentence), jobId)
+}
+for (const jobId of [2, 9, 10]) {
+  const labeled = withJobNameLine(jobId, OLD[jobId])
+  assert.equal(labeled.startsWith(`משרה: ${ORGANIC_JOB_NAMES[jobId]}\n`), true)
+  assert.deepEqual(matchingOrganicJobs(labeled), [jobId])
+}
 
 const prefill = withJobNameLine(10, 'היי\nשם:')
 assert.equal(prefill, 'משרה: שירות לקוחות באר שבע\nהיי\nשם:')
 assert.equal(matchOrganicJob(prefill), 10)
-assert.equal(withJobNameLine(4, 'היי'), 'היי')
+assert.equal(ORGANIC_JOB_NAMES[1], 'קשרי לקוחות בית השקעות')
 assert.equal(ORGANIC_JOB_NAMES[2], 'שירות לקוחות רמת החייל')
+assert.equal(ORGANIC_JOB_NAMES[3], 'שירות מוקד מעסיקים פתח תקווה')
+assert.equal(ORGANIC_JOB_NAMES[4], 'מכירות מוקד פיננסי גבעת שאול')
+assert.equal(ORGANIC_JOB_NAMES[5], 'תומך מסחר שוק ההון')
+assert.equal(ORGANIC_JOB_NAMES[6], 'הנהלת חשבונות מהבית')
+assert.equal(ORGANIC_JOB_NAMES[7], 'יועץ השקעות ג׳וניור תל אביב')
+assert.equal(ORGANIC_JOB_NAMES[8], 'מכירות רמת גן')
 assert.equal(ORGANIC_JOB_NAMES[9], 'שימור לקוחות פתח תקווה')
+assert.equal(ORGANIC_JOB_NAMES[10], 'שירות לקוחות באר שבע')
 
 const messages = [
   { direction: 'out', text: 'שירות לקוחות באר שבע', timestamp: '2026-11-01T00:00:00.000Z' },
