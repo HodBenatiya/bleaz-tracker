@@ -4,7 +4,7 @@ import {
   accountDatesForSpans,
   assertMetaRead,
   bucketToIsraelDays,
-  dateInSpans,
+  dailyInsightSlices,
   HISTORY_FLOOR_DAYS,
   isTokenEnvName,
   mergeAccountConfigs,
@@ -19,6 +19,7 @@ import {
 } from '../../../src/utils/metaAds/syncCore.ts'
 import { parseAdMetric, syncModeOf, type SyncMode } from '../../../src/utils/metaAds/adMetrics.ts'
 import { backoffMs, rateLimitCode } from '../../../src/utils/metaAds/rateLimit.ts'
+import { chunkIsoRange, recentSpendWindow } from '../../../src/utils/metaAds/range.ts'
 import { addDaysISO, todayInIsrael } from '../../../src/utils/metaAds/zone.ts'
 
 const ISRAEL = 'Asia/Jerusalem'
@@ -75,6 +76,18 @@ async function paged(url: string): Promise<Record<string, unknown>[]> {
     next = typeof paging?.next === 'string' ? paging.next : null
   }
   return rows
+}
+
+function dailyCampaignUrl(accountId: string, since: string, until: string, token: string): string {
+  const params = new URLSearchParams({
+    level: 'campaign',
+    fields: 'campaign_id,campaign_name,spend,impressions,clicks,actions,account_currency',
+    time_range: JSON.stringify({ since, until }),
+    time_increment: '1',
+    limit: '500',
+    access_token: token,
+  })
+  return `https://graph.facebook.com/${META_GRAPH_VERSION}/${accountId}/insights?${params}`
 }
 
 function insightsUrl(accountId: string, date: string, token: string): string {
@@ -148,6 +161,23 @@ function readExtraAccounts(): AccountConfig[] {
     })
   }
   return extras
+}
+
+async function cacheDailyInsights(
+  account: AccountConfig,
+  token: string,
+  since: string,
+  until: string,
+  today: string,
+): Promise<Record<string, unknown>[]> {
+  const slices: IsraelSlice[] = []
+  for (const chunk of chunkIsoRange(since, until, 90)) {
+    const page = await paged(dailyCampaignUrl(account.accountId, chunk.start, chunk.end, token))
+    slices.push(...dailyInsightSlices(page as MetaInsightRow[], account.currency))
+  }
+  return slices
+    .filter(slice => slice.date >= since && slice.date <= until && slice.date <= today)
+    .map(slice => sliceRow(account.accountId, slice, 'insight_date'))
 }
 
 function sliceRow(accountId: string, slice: IsraelSlice, dateField: 'insight_date' | 'snapshot_date') {
@@ -374,9 +404,13 @@ async function syncAdDepth(
   })))
 }
 
+function isoDay(value: unknown): string {
+  const text = String(value ?? '').slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : ''
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return json({ ok: true })
-  if (!authorized(req)) return json({ error: 'unauthorized' }, 401)
 
   const started = new Date().toISOString()
   const supabase = createClient(
@@ -384,15 +418,29 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     { auth: { persistSession: false } },
   )
+  const cron = authorized(req)
+  let userOk = false
+  if (!cron) {
+    const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+    if (bearer) {
+      const { data, error } = await supabase.auth.getUser(bearer)
+      userOk = !error && !!data?.user
+    }
+  }
+  if (!cron && !userOk) return json({ error: 'unauthorized' }, 401)
 
   let backfillDays = 3
   let mode: SyncMode = 'backfill'
+  let since = ''
+  let until = ''
   if (req.method === 'POST') {
     try {
-      const body = await req.json() as { backfill_days?: number; mode?: string }
+      const body = await req.json() as { backfill_days?: number; mode?: string; since?: string; until?: string }
       if (typeof body?.backfill_days === 'number') backfillDays = body.backfill_days
       mode = syncModeOf(body?.mode)
       if (body?.mode == null && typeof body?.backfill_days === 'number') mode = 'backfill'
+      since = isoDay(body?.since)
+      until = isoDay(body?.until)
     } catch {
       /* cron may send an empty body */
     }
@@ -422,6 +470,18 @@ Deno.serve(async (req) => {
     }
     const accounts = mergeAccountConfigs(fromTable, extras)
     const today = todayInIsrael()
+    if (mode === 'range') {
+      if (!since || !until) return json({ error: 'range' }, 400)
+      if (since > until) {
+        const swap = since
+        since = until
+        until = swap
+      }
+      if (until > today) until = today
+      const floor = addDaysISO(today, -400)
+      if (since < floor) since = floor
+      if (since > until) return json({ ok: true, mode, daily_rows: 0, today_rows: 0 })
+    }
     const { data: stateRow } = await supabase.from('meta_sync_state').select('oldest_date').eq('id', 'default').maybeSingle()
     const oldest = stateRow?.oldest_date ? String(stateRow.oldest_date).slice(0, 10) : null
     const plan = mode === 'today'
@@ -451,8 +511,24 @@ Deno.serve(async (req) => {
         continue
       }
       try {
+        const dailySince = mode === 'range'
+          ? since
+          : mode === 'today'
+            ? recentSpendWindow(today, 35).since
+            : (plan.spans.map(span => span.start).sort()[0] || addDaysISO(today, -2))
+        const dailyUntil = mode === 'range' ? until : today
+        if (dailySince && dailyUntil && dailySince <= dailyUntil) {
+          const cached = await cacheDailyInsights(account, token, dailySince, dailyUntil, today)
+          await upsertChunks(supabase, 'meta_campaign_daily', cached)
+          dailyRows += cached.length
+        }
+        if (mode === 'range') {
+          syncedAccounts += 1
+          continue
+        }
+
         const parsed = []
-        for (const date of dates) {
+        for (const date of accountDatesForSpans([{ start: today, end: today }])) {
           const page = await paged(insightsUrl(account.accountId, date, token))
           for (const row of page) {
             const hour = parseInsightRow(row as MetaInsightRow, account.currency)
@@ -460,10 +536,8 @@ Deno.serve(async (req) => {
           }
         }
         const slices = bucketToIsraelDays(parsed, account.timezone)
-          .filter(slice => dateInSpans(slice.date, plan.spans))
-        const daily = slices.filter(slice => slice.date < today).map(slice => sliceRow(account.accountId, slice, 'insight_date'))
-        const live = slices.filter(slice => slice.date === today).map(slice => sliceRow(account.accountId, slice, 'snapshot_date'))
-        await upsertChunks(supabase, 'meta_campaign_daily', daily)
+          .filter(slice => slice.date === today)
+        const live = slices.map(slice => sliceRow(account.accountId, slice, 'snapshot_date'))
 
         if (live.length === 0) {
           const { error } = await supabase.from('meta_campaign_today').delete().eq('account_id', account.accountId)
@@ -526,7 +600,6 @@ Deno.serve(async (req) => {
         } catch (error) {
           notes.push(`${account.name}: ad insights ${stripSecrets(error instanceof Error ? error.message : 'failed')}`.slice(0, 220))
         }
-        dailyRows += daily.length
         todayRows += live.length
         syncedAccounts += 1
       } catch (error) {

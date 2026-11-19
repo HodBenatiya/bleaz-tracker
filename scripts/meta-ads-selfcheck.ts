@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict'
-import { adFromReferral } from '../src/utils/metaAds/adLink'
-import { creativeFatigue, insightLeads, parseAdMetric, placementLabel } from '../src/utils/metaAds/adMetrics'
-import { referralFromRecord } from '../src/utils/metaAds/adReferral'
-import { backoffMs, rateLimitCode } from '../src/utils/metaAds/rateLimit'
-import { campaignFunnel } from '../src/utils/metaAds/campaignFunnel'
-import { inferCampaign } from '../src/utils/metaAds/inferCampaign'
-import { campaignIsLive, updatedAgo, visibleCampaigns } from '../src/utils/metaAds/live'
-import { attributeLead } from '../src/utils/metaAds/attributeLead'
-import { exampleBundle } from '../src/utils/metaAds/example'
-import { suggestCampaignPositions } from '../src/utils/metaAds/matchCampaign'
-import { campaignsFromMaps, computeAdsMetrics, metricLeads } from '../src/utils/metaAds/metrics'
-import { formatMoney } from '../src/utils/metaAds/money'
-import { isDropoutStatus, isInterviewStatus, isRelevantStatus } from '../src/utils/metaAds/stages'
+import { adFromReferral } from '../src/utils/metaAds/adLink.ts'
+import { creativeFatigue, insightLeads, parseAdMetric, placementLabel } from '../src/utils/metaAds/adMetrics.ts'
+import { referralFromRecord } from '../src/utils/metaAds/adReferral.ts'
+import { backoffMs, rateLimitCode } from '../src/utils/metaAds/rateLimit.ts'
+import { campaignFunnel } from '../src/utils/metaAds/campaignFunnel.ts'
+import { inferCampaign } from '../src/utils/metaAds/inferCampaign.ts'
+import { campaignIsLive, updatedAgo, visibleCampaigns } from '../src/utils/metaAds/live.ts'
+import { attributeLead } from '../src/utils/metaAds/attributeLead.ts'
+import { exampleBundle } from '../src/utils/metaAds/example.ts'
+import { suggestCampaignPositions } from '../src/utils/metaAds/matchCampaign.ts'
+import { campaignsFromMaps, computeAdsMetrics, metricLeads } from '../src/utils/metaAds/metrics.ts'
+import { formatMoney } from '../src/utils/metaAds/money.ts'
+import { isDropoutStatus, isInterviewStatus, isRelevantStatus } from '../src/utils/metaAds/stages.ts'
 import {
   accountDatesForSpans,
   assertMetaRead,
   bucketToIsraelDays,
+  dailyInsightSlices,
   mergeAccountConfigs,
   normalizeAccountId,
   parseInsightRow,
@@ -23,11 +24,13 @@ import {
   planFetchSpans,
   safeEqual,
   stripSecrets,
-} from '../src/utils/metaAds/syncCore'
-import { israelDateForAccountHour, parseHourLabel } from '../src/utils/metaAds/zone'
+} from '../src/utils/metaAds/syncCore.ts'
+import { calendarDay, israelDateForAccountHour, parseHourLabel } from '../src/utils/metaAds/zone.ts'
+import { chunkIsoRange, datesMissingSpend, historySpan, resolveMarketingRange } from '../src/utils/metaAds/range.ts'
+import { buildTrend } from '../src/utils/metaAds/trend.ts'
 
 assert.equal(isRelevantStatus('relevant'), true)
-assert.equal(isRelevantStatus('future_relevant'), false)
+assert.equal(isRelevantStatus('future_relevant'), true)
 assert.equal(isRelevantStatus('called'), false)
 assert.equal(isInterviewStatus('called'), false)
 assert.equal(isInterviewStatus('interview_scheduled'), true)
@@ -354,5 +357,122 @@ assert.equal(adFromReferral(
   [{ accountId: 'act_1', adId: '33', adsetId: '22', campaignId: '111', campaignName: 'BDO' }],
 )?.adsetId, '22')
 assert.equal(adFromReferral([{ sourceId: '999' }], [{ accountId: 'act_1', adId: '33', adsetId: '22', campaignId: '111', campaignName: 'BDO' }]), null)
+
+assert.equal(calendarDay('2026-11-18T23:30:00.000Z'), '2026-11-19')
+assert.equal(calendarDay('2026-11-19'), '2026-11-19')
+
+const kept = dailyInsightSlices([
+  { campaign_id: '9', campaign_name: 'ישן', spend: '12.5', date_start: '2026-11-17', account_currency: 'USD' },
+], 'ILS')
+assert.equal(kept.length, 1)
+assert.equal(kept[0].date, '2026-11-17')
+assert.equal(kept[0].spend, 12.5)
+assert.equal(bucketToIsraelDays([{
+  campaignId: '9', campaignName: 'ישן', currency: 'USD', accountDate: '2026-11-17', hour: null,
+  spend: 12.5, impressions: 0, clicks: 0, results: 0, resultAction: '',
+}], 'America/Los_Angeles').length, 0)
+
+const todayRange = '2026-11-19'
+assert.deepEqual(resolveMarketingRange({ preset: 'today', today: todayRange }), { start: todayRange, end: todayRange, label: 'היום' })
+assert.equal(resolveMarketingRange({ preset: 'yesterday', today: todayRange }).start, '2026-11-18')
+assert.equal(resolveMarketingRange({ preset: 'week', today: todayRange }).start, '2026-11-13')
+assert.equal(resolveMarketingRange({ preset: 'month', today: todayRange }).start, '2026-11-01')
+assert.equal(resolveMarketingRange({ preset: 'past', today: todayRange, pastMonth: '2026-10' }).end, '2026-10-31')
+assert.equal(resolveMarketingRange({ preset: 'custom', today: todayRange, customStart: '2026-11-10', customEnd: '2026-11-02' }).start, '2026-11-02')
+assert.deepEqual(datesMissingSpend('2026-11-17', '2026-11-19', '2026-11-19', ['2026-11-17']), ['2026-11-18'])
+assert.deepEqual(historySpan('2026-11-19', '2026-11-19', '2026-11-19'), null)
+assert.deepEqual(historySpan('2026-11-01', '2026-11-19', '2026-11-19'), { since: '2026-11-01', until: '2026-11-18' })
+assert.equal(chunkIsoRange('2026-10-01', '2026-10-03', 2).length, 2)
+
+const retro = computeAdsMetrics({
+  spend: [
+    { accountId: 'a', campaignId: 'old', date: '2026-10-02', spend: 90, currency: 'ILS' },
+    { accountId: 'a', campaignId: 'free', date: '2026-10-02', spend: 10, currency: 'ILS' },
+  ],
+  maps: [{ accountId: 'a', campaignId: 'old', positionId: 'job-1' }],
+  leads: [
+    { id: 'late', status: 'future_relevant', anchorDay: '2026-11-19', positionIds: ['job-1'], placementKind: 'out' },
+    { id: 'talk', status: 'interview_scheduled', anchorDay: '2026-10-02', positionIds: ['job-1'], placementKind: 'out' },
+    { id: 'hire', status: 'placement_complete', anchorDay: '2026-10-02', positionIds: ['job-1'], placementKind: 'dated' },
+    { id: 'other', status: 'new', anchorDay: '2026-10-03', positionIds: [], placementKind: 'out' },
+  ],
+  jobIds: ['job-1'],
+  usdToIls: null,
+  start: '2026-10-01',
+  end: '2026-10-07',
+})
+assert.equal(retro.selection.money.byCurrency[0].amount, 90)
+assert.equal(retro.selection.counts.leads, 2)
+assert.equal(retro.selection.counts.relevant, 2)
+assert.equal(retro.selection.counts.interviews, 2)
+assert.equal(retro.selection.counts.placements, 1)
+assert.equal(retro.selection.costPerLead.amount, 45)
+assert.equal(retro.selection.costPerPlacement.amount, 90)
+assert.equal(retro.jobs.find(job => job.id === 'job-1')?.counts.leads, 2)
+assert.equal(retro.unattributed.label, 'ללא שיוך')
+assert.equal(retro.unattributed.money.byCurrency[0].amount, 10)
+
+const noLeads = computeAdsMetrics({
+  spend: [{ accountId: 'a', campaignId: 'old', date: '2026-10-02', spend: 90, currency: 'ILS' }],
+  maps: [],
+  leads: [],
+  jobIds: 'all',
+  usdToIls: null,
+  start: '2026-10-02',
+  end: '2026-10-02',
+})
+assert.equal(noLeads.selection.costPerLead.amount, null)
+assert.equal(noLeads.selection.costPerRelevant.amount, null)
+assert.equal(noLeads.selection.money.byCurrency[0].amount, 90)
+
+const fromJob = metricLeads([
+  { id: 'c1', status: 'future_relevant', source: 'WhatsApp', savedPositionId: 'job-1', createdAt: '2026-11-18T23:30:00.000Z' },
+], [], '2026-11-19', '2026-11-19')
+assert.equal(fromJob[0].anchorDay, '2026-11-19')
+assert.deepEqual(fromJob[0].positionIds, ['job-1'])
+const jobReport = computeAdsMetrics({
+  spend: [{ accountId: 'a', campaignId: 'old', date: '2026-11-19', spend: 40, currency: 'ILS' }],
+  maps: [{ accountId: 'a', campaignId: 'old', positionId: 'job-1' }],
+  leads: fromJob,
+  jobIds: 'all',
+  usdToIls: null,
+  start: '2026-11-19',
+  end: '2026-11-19',
+})
+assert.equal(jobReport.jobs.find(job => job.id === 'job-1')?.counts.leads, 1)
+assert.equal(jobReport.jobs.find(job => job.id === 'job-1')?.counts.relevant, 1)
+assert.equal(jobReport.jobs.find(job => job.id === 'job-1')?.costPerLead.amount, 40)
+assert.equal(jobReport.jobs.find(job => job.id === 'job-1')?.costPerInterview.amount, null)
+
+const trend = buildTrend({
+  spend: [
+    { accountId: 'a', campaignId: 'old', date: '2026-11-16', spend: 20, currency: 'ILS' },
+    { accountId: 'a', campaignId: 'old', date: '2026-11-17', spend: 10, currency: 'ILS' },
+  ],
+  maps: [{ accountId: 'a', campaignId: 'old', positionId: 'job-1' }],
+  leads: [
+    { id: 'c1', status: 'new', anchorDay: '2026-11-16', positionIds: ['job-1'], placementKind: 'out' },
+  ],
+  jobId: 'job-1',
+  usdToIls: null,
+  start: '2026-11-16',
+  end: '2026-11-17',
+  grain: 'day',
+})
+assert.equal(trend.length, 2)
+assert.equal(trend[0].leads, 1)
+assert.equal(trend[0].costPerLead.amount, 20)
+assert.equal(trend[1].leads, 0)
+assert.equal(trend[1].costPerLead.amount, null)
+assert.equal(buildTrend({
+  spend: trend.flatMap(() => []),
+  maps: [],
+  leads: [],
+  jobId: 'all',
+  usdToIls: null,
+  start: '2026-11-16',
+  end: '2026-11-17',
+  grain: 'week',
+})[0].key, '2026-11-15')
 
 console.log('meta ads selfcheck ok')

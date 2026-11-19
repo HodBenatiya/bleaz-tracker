@@ -32,6 +32,17 @@ export function todayInIsrael(now = new Date()): string {
   return todayInZone(ISRAEL_TZ, now)
 }
 
+/** ISO timestamps use the zone's calendar day. Date-only strings stay as written. */
+export function calendarDay(value: string | undefined | null, timeZone = ISRAEL_TZ): string {
+  if (!value) return ''
+  if (value.includes('T')) {
+    const parsed = new Date(value)
+    if (!Number.isNaN(parsed.getTime())) return formatDateInZone(parsed, timeZone)
+  }
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/)
+  return match ? match[1] : ''
+}
+
 /** Date-only arithmetic. Noon UTC avoids DST shifting the calendar day. */
 export function addDaysISO(iso: string, days: number): string {
   const [year, month, day] = iso.split('-').map(Number)

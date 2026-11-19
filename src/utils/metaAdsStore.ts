@@ -3,6 +3,7 @@ import { supabase } from './supabase'
 import { isMissingViewerRpc, readViewerPages, type ViewerFilter, type ViewerTable } from './viewerRead'
 import { campaignIsLive } from './metaAds/live'
 import type { SpendSlice, MapRow } from './metaAds/metrics'
+import { historySpan } from './metaAds/range'
 import { todayInIsrael } from './metaAds/zone'
 
 export interface AdsAccountRow {
@@ -47,6 +48,7 @@ export interface AdsBundle {
   usdToIls: number | null
   lastSync: AdsSyncLog | null
   todaySpend: SpendSlice[]
+  historyNote?: string | null
 }
 
 type DbError = { code?: string; message?: string } | null
@@ -80,7 +82,95 @@ async function page<T>(load: (from: number, to: number) => PromiseLike<{ data: T
   return rows
 }
 
+const HISTORY_NOTE = 'ההוצאה לימים הקודמים עדיין לא נשמרה. אחרי עדכון סנכרון מטא היא תיטען לטווח שנבחר.'
+const COVERAGE_KEY = 'meta_daily_coverage_v1'
+const COVERAGE_MS = 6 * 60 * 60 * 1000
+const FAIL_MS = 2 * 60 * 1000
+
+function browserStorage(): Storage | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null
+    return sessionStorage
+  } catch {
+    return null
+  }
+}
+
+interface Coverage { since: string; until: string; at: number }
+
+function readCoverage(): Coverage[] {
+  const storage = browserStorage()
+  if (!storage) return []
+  try {
+    const parsed = JSON.parse(storage.getItem(COVERAGE_KEY) || '[]') as Coverage[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function spanCovered(since: string, until: string): boolean {
+  const now = Date.now()
+  return readCoverage().some(row => now - row.at < COVERAGE_MS && row.since <= since && row.until >= until)
+}
+
+function rememberCoverage(since: string, until: string) {
+  const storage = browserStorage()
+  if (!storage) return
+  const rows = readCoverage().filter(row => Date.now() - row.at < COVERAGE_MS)
+  rows.push({ since, until, at: Date.now() })
+  storage.setItem(COVERAGE_KEY, JSON.stringify(rows.slice(-12)))
+}
+
+function recentlyFailed(since: string, until: string): boolean {
+  const storage = browserStorage()
+  if (!storage) return false
+  const at = Number(storage.getItem(`meta_daily_fail:${since}:${until}`) || 0)
+  return at > 0 && Date.now() - at < FAIL_MS
+}
+
+function rememberFailure(since: string, until: string) {
+  browserStorage()?.setItem(`meta_daily_fail:${since}:${until}`, String(Date.now()))
+}
+
+/** Ask the existing Meta sync to cache daily insights for days before today. */
+export async function ensureDailySpend(start: string, end: string): Promise<string | null> {
+  const span = historySpan(start, end, todayInIsrael())
+  if (!span) return null
+  if (spanCovered(span.since, span.until)) return null
+  if (recentlyFailed(span.since, span.until)) return HISTORY_NOTE
+  try {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+    const base = import.meta.env.VITE_SUPABASE_URL as string
+    if (!token || !base) {
+      rememberFailure(span.since, span.until)
+      return HISTORY_NOTE
+    }
+    const response = await fetch(`${base}/functions/v1/meta-ads-sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      },
+      body: JSON.stringify({ mode: 'range', since: span.since, until: span.until }),
+      signal: AbortSignal.timeout(25000),
+    })
+    if (!response.ok) {
+      rememberFailure(span.since, span.until)
+      return HISTORY_NOTE
+    }
+    rememberCoverage(span.since, span.until)
+    return null
+  } catch {
+    rememberFailure(span.since, span.until)
+    return HISTORY_NOTE
+  }
+}
+
 export async function loadAdsBundle(start: string, end: string): Promise<AdsBundle> {
+  const historyNote = await ensureDailySpend(start, end)
   const israelToday = todayInIsrael()
   try {
     const viewerDaily = await viewerTable('meta_campaign_daily', { insight_date_gte: start, insight_date_lte: end })
@@ -206,6 +296,7 @@ export async function loadAdsBundle(start: string, end: string): Promise<AdsBund
         message: String(last.message ?? ''),
       } : null,
       todaySpend,
+      historyNote,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'לא הצלחנו לטעון את נתוני המודעות'

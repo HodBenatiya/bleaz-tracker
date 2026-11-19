@@ -19,6 +19,7 @@ import {
 } from '../utils/helpers'
 import AlertsBanner from './AlertsBanner'
 import GuaranteeBadge from './GuaranteeBadge'
+import { OrganicLeadsTile } from './OrganicLeadsCard'
 import { selectGuaranteeAlerts, watchPlacements } from '../utils/guarantee'
 
 interface Props {
@@ -28,6 +29,7 @@ interface Props {
   tasks:      Task[]
   candidates: Candidate[]
   onNav:      (v: 'tasks' | 'pipeline' | 'candidates') => void
+  onOpenCandidate?: (id: string) => void
 }
 
 const COLORS = { blue: '#2563eb', emerald: '#10b981', amber: '#f59e0b', violet: '#7c3aed', red: '#ef4444' }
@@ -88,7 +90,7 @@ function FunnelBar({ label, value, total, pct, color }: {
   )
 }
 
-export default function Dashboard({ reports, positions, pipeline, tasks, candidates, onNav }: Props) {
+export default function Dashboard({ reports, positions, pipeline, tasks, candidates, onNav, onOpenCandidate }: Props) {
   const [tab, setTab] = useState<DashboardTab>('daily')
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null)
 
@@ -102,12 +104,17 @@ export default function Dashboard({ reports, positions, pipeline, tasks, candida
   const overdueTasks = openTasks.filter(t => t.dueDate < today)
   const todayTasks   = openTasks.filter(t => t.dueDate === today)
 
+  const organic = <OrganicLeadsTile candidates={candidates} onOpenCandidate={onOpenCandidate} />
+
   if (reports.length === 0 && pipeline.length === 0 && tasks.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-        <Activity className="mb-4 opacity-30" size={64} />
-        <p className="text-lg font-semibold">אין נתונים עדיין</p>
-        <p className="text-sm mt-1">מלא את הדיווח היומי הראשון כדי לראות סטטיסטיקות</p>
+      <div className="max-w-5xl mx-auto pb-12 space-y-4">
+        {organic}
+        <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+          <Activity className="mb-4 opacity-30" size={64} />
+          <p className="text-lg font-semibold">אין נתונים עדיין</p>
+          <p className="text-sm mt-1">מלא את הדיווח היומי הראשון כדי לראות סטטיסטיקות</p>
+        </div>
       </div>
     )
   }
@@ -115,6 +122,7 @@ export default function Dashboard({ reports, positions, pipeline, tasks, candida
   return (
     <div className="max-w-5xl mx-auto pb-12">
       <AlertsBanner todayReport={todayReport} weekReports={weekReports} />
+      {organic}
 
       {(overdueTasks.length > 0 || todayTasks.length > 0) && (
         <button onClick={() => onNav('tasks')}

@@ -150,9 +150,9 @@ export function placementLabel(platform: string, position: string): string {
   return raw || 'אחר'
 }
 
-export type SyncMode = 'today' | 'close' | 'backfill'
+export type SyncMode = 'today' | 'close' | 'backfill' | 'range'
 
 export function syncModeOf(value: unknown): SyncMode {
-  if (value === 'today' || value === 'close' || value === 'backfill') return value
+  if (value === 'today' || value === 'close' || value === 'backfill' || value === 'range') return value
   return 'backfill'
 }

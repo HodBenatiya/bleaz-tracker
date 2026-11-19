@@ -22,6 +22,7 @@ interface Props {
   candidates: Candidate[]
   positions:  SavedPosition[]
   onChange:   (candidates: Candidate[]) => void
+  focusCandidate?: { id: string; token: number } | null
 }
 
 const STATUS_ORDER: CandidateStatus[] = [
@@ -96,7 +97,7 @@ function formatDateHe(iso: string): string {
   return new Date(iso + 'T12:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: '2-digit' })
 }
 
-export default function Candidates({ candidates, positions, onChange }: Props) {
+export default function Candidates({ candidates, positions, onChange, focusCandidate }: Props) {
   const canEdit = useCanEdit()
   const [showForm,        setShowForm]       = useState(false)
   const [editing,         setEditing]        = useState<Candidate | null>(null)
@@ -122,6 +123,12 @@ export default function Candidates({ candidates, positions, onChange }: Props) {
     const types = new Set(candidates.map(c => c.positionType).filter(Boolean))
     return [...types].sort()
   }, [candidates])
+
+  useEffect(() => {
+    if (!focusCandidate?.id) return
+    const found = candidates.find(candidate => candidate.id === focusCandidate.id)
+    if (found) setViewing(found)
+  }, [focusCandidate?.token])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {

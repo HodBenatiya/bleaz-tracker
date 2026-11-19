@@ -2,8 +2,8 @@
  * Funnel stages for ad cost, taken from the CRM candidate statuses.
  *
  * ליד            every candidate who entered in the date range
- * ליד רלוונטי    relevant, sent_to_client, interview_scheduled, started_working, placement_complete
- *                future_relevant stays out: the recruiter marked them for later, not for this job now
+ * ליד רלוונטי    relevant, future_relevant, sent_to_client, interview_scheduled,
+ *                started_working, placement_complete
  * ראיון עבודה    interview_scheduled and anyone already past it (started_working, placement_complete)
  *                called is a screening call, not a job interview
  * השמה           started_working or placement_complete
@@ -13,6 +13,7 @@
 
 export const RELEVANT_STATUSES = [
   'relevant',
+  'future_relevant',
   'sent_to_client',
   'interview_scheduled',
   'started_working',
@@ -45,7 +46,7 @@ export const METRIC_COPY = {
   spend: { label: 'הוצאה', hint: 'כמה שולם למטא בטווח שנבחר' },
   leads: { label: 'לידים', hint: 'מועמדים שנכנסו ל-CRM בטווח' },
   costPerLead: { label: 'עלות לליד', hint: 'הוצאה לחלק למספר הלידים' },
-  relevant: { label: 'לידים רלוונטיים', hint: 'סומנו רלוונטי, נשלחו ללקוח, הגיעו לראיון או הושמו' },
+  relevant: { label: 'לידים רלוונטיים', hint: 'רלוונטי, רלוונטי עתידי, נשלח ללקוח, ראיון או השמה' },
   costPerRelevant: { label: 'עלות לליד רלוונטי', hint: 'הוצאה לחלק ללידים הרלוונטיים' },
   interviews: { label: 'ראיונות עבודה', hint: 'נקבע ראיון, או שהמועמד כבר התחיל לעבוד או הושם' },
   costPerInterview: { label: 'עלות לראיון', hint: 'הוצאה לחלק לראיונות העבודה' },
