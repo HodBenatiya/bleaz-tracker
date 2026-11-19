@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DailyReport, Candidate, SavedPosition } from '../types'
-import { toISODate } from '../utils/helpers'
 import { candidateAnchor, classifyPlacementForSpendRange } from '../utils/candidateAnchor'
-import { todayInIsrael } from '../utils/metaAds/zone'
+import { monthName, resolveMarketingRange, type RangePreset } from '../utils/metaAds/range'
+import { addDaysISO, todayInIsrael } from '../utils/metaAds/zone'
 import { examplePositions } from '../utils/metaAds/example'
 import AdsAnalytics from './AdsAnalytics'
 
@@ -61,24 +61,6 @@ interface CampaignRow {
   spend:   number
   leads:   number
   cpl:     number
-}
-
-type RangePreset = 'today' | 'yesterday' | 'week' | 'month' | 'past' | 'custom'
-
-function shiftDays(iso: string, days: number): string {
-  const date = new Date(iso + 'T12:00:00')
-  date.setDate(date.getDate() + days)
-  return toISODate(date)
-}
-
-function monthBounds(year: number, month: number): { start: string; end: string } {
-  const start = `${year}-${String(month).padStart(2, '0')}-01`
-  const end = toISODate(new Date(year, month, 0))
-  return { start, end }
-}
-
-function monthName(year: number, month: number): string {
-  return new Date(year, month - 1, 1).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' })
 }
 
 function buildCampaignRows(reports: DailyReport[]): CampaignRow[] {
@@ -219,7 +201,7 @@ export default function MarketingROI({ reports, candidates, positions, exampleOn
   const [jobIds, setJobIds] = useState<string[]>([])
   const [preset, setPreset] = useState<RangePreset>('today')
   const [pastMonth, setPastMonth] = useState('')
-  const [customStart, setCustomStart] = useState(shiftDays(today, -6))
+  const [customStart, setCustomStart] = useState(addDaysISO(today, -6))
   const [customEnd, setCustomEnd] = useState(today)
 
   const pastMonths = useMemo(() => {
@@ -232,28 +214,13 @@ export default function MarketingROI({ reports, candidates, positions, exampleOn
     })
   }, [])
 
-  const range = useMemo(() => {
-    if (preset === 'yesterday') {
-      const day = shiftDays(today, -1)
-      return { start: day, end: day, label: 'אתמול' }
-    }
-    if (preset === 'week') return { start: shiftDays(today, -6), end: today, label: '7 ימים אחרונים' }
-    if (preset === 'month') {
-      const now = new Date()
-      return { start: monthBounds(now.getFullYear(), now.getMonth() + 1).start, end: today, label: 'החודש' }
-    }
-    if (preset === 'past' && pastMonth) {
-      const [year, month] = pastMonth.split('-').map(Number)
-      const bounds = monthBounds(year, month)
-      return { ...bounds, label: monthName(year, month) }
-    }
-    if (preset === 'custom') {
-      const start = customStart <= customEnd ? customStart : customEnd
-      const end = customStart <= customEnd ? customEnd : customStart
-      return { start, end, label: `${start} – ${end}` }
-    }
-    return { start: today, end: today, label: 'היום' }
-  }, [preset, pastMonth, customStart, customEnd, today])
+  const range = useMemo(() => resolveMarketingRange({
+    preset,
+    today,
+    pastMonth,
+    customStart,
+    customEnd,
+  }), [preset, pastMonth, customStart, customEnd, today])
 
   const rangedReports = reports.filter(report => report.date >= range.start && report.date <= range.end)
   const rangedCandidates = candidates.filter(candidate => {
@@ -299,70 +266,51 @@ export default function MarketingROI({ reports, candidates, positions, exampleOn
 
   return (
     <div className="space-y-6">
-      <div className="card">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs text-slate-500">טווח</p>
-            <p className="text-lg font-black text-slate-800">{range.label}</p>
-            <p className="text-sm text-slate-500 mt-1">{range.start === range.end ? range.start : `${range.start} – ${range.end}`}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {presets.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setPreset(item.id)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold ${preset === item.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
-              >
-                {item.label}
-              </button>
-            ))}
-            <select
-              value={preset === 'past' ? pastMonth : ''}
-              onChange={event => {
-                setPastMonth(event.target.value)
-                setPreset('past')
-              }}
-              className="text-xs rounded-full border border-slate-200 px-3 py-1.5 bg-white"
+      <div className="card py-3 px-3 sm:px-4">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {presets.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setPreset(item.id)}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${preset === item.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
             >
-              <option value="">חודש מלא…</option>
-              {pastMonths.map(month => <option key={month.key} value={month.key}>{month.label}</option>)}
-            </select>
-            <label className="text-[11px] text-slate-500 flex items-center gap-1">
-              מ
-              <input type="date" value={customStart} onChange={event => { setCustomStart(event.target.value); setPreset('custom') }} className="text-xs border border-slate-200 rounded-lg px-2 py-1" />
-            </label>
-            <label className="text-[11px] text-slate-500 flex items-center gap-1">
-              עד
-              <input type="date" value={customEnd} onChange={event => { setCustomEnd(event.target.value); setPreset('custom') }} className="text-xs border border-slate-200 rounded-lg px-2 py-1" />
-            </label>
-            {!exampleOnly && (
-              <button
-                type="button"
-                onClick={() => { setExample(value => !value); setJobIds([]) }}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold ${example ? 'bg-amber-200 text-amber-950' : 'bg-slate-100 text-slate-600'}`}
-              >
-                {example ? 'חזרה לנתונים' : 'הצג דוגמה'}
-              </button>
-            )}
-          </div>
+              {item.label}
+            </button>
+          ))}
+          <select
+            value={preset === 'past' ? pastMonth : ''}
+            onChange={event => {
+              setPastMonth(event.target.value)
+              setPreset('past')
+            }}
+            className="text-[11px] rounded-full border border-slate-200 px-2 py-1 bg-white max-w-[9rem]"
+          >
+            <option value="">חודש מלא…</option>
+            {pastMonths.map(month => <option key={month.key} value={month.key}>{month.label}</option>)}
+          </select>
+          <label className="text-[11px] text-slate-500 flex items-center gap-1">
+            מ
+            <input type="date" value={customStart} onChange={event => { setCustomStart(event.target.value); setPreset('custom') }} className="text-[11px] border border-slate-200 rounded-lg px-1.5 py-1" />
+          </label>
+          <label className="text-[11px] text-slate-500 flex items-center gap-1">
+            עד
+            <input type="date" value={customEnd} onChange={event => { setCustomEnd(event.target.value); setPreset('custom') }} className="text-[11px] border border-slate-200 rounded-lg px-1.5 py-1" />
+          </label>
+          {!exampleOnly && (
+            <button
+              type="button"
+              onClick={() => { setExample(value => !value); setJobIds([]) }}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${example ? 'bg-amber-200 text-amber-950' : 'bg-slate-100 text-slate-600'}`}
+            >
+              {example ? 'חזרה לנתונים' : 'הצג דוגמה'}
+            </button>
+          )}
         </div>
-        <div className="mt-4">
+        <p className="text-[11px] text-slate-400 mt-2">{range.label} · {range.start === range.end ? range.start : `${range.start} – ${range.end}`}</p>
+        <div className="mt-2">
           <JobMultiSelect positions={filterPositions} selectedIds={jobIds} onToggle={toggleJob} onClear={() => setJobIds([])} />
         </div>
-        {!example && fallbackCount > 0 && (
-          <p className="text-[11px] text-amber-700 mt-3">{fallbackCount} מועמדים בלי תאריך יצירה נספרו לפי התאריך המוקדם ביותר שיש להם.</p>
-        )}
-        {!example && withheldPlacements > 0 && (
-          <p className="text-[11px] text-amber-800 mt-3 leading-relaxed">
-            {withheldPlacements} השמות שויכו ידנית לחודש בלבד, בלי יום מדויק. הן לא נכנסות ל-ROI ולעלות להשמה בטווח הזה, כדי לא להשוות הוצאה יומית או חלקית לכל ההשמות של החודש. בחרו את החודש המלא כדי לכלול אותן.
-          </p>
-        )}
-        {!example && monthPlacements > 0 && (
-          <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
-            נכללו {monthPlacements} השמות עם שיוך ידני, כי החודש שלהן נמצא במלואו בטווח.
-          </p>
-        )}
       </div>
 
       <AdsAnalytics
@@ -375,8 +323,24 @@ export default function MarketingROI({ reports, candidates, positions, exampleOn
         example={example}
       />
 
-      {!example && <>
-      <h3 className="text-sm font-bold text-slate-500">דיווח יומי ומקורות הגעה</h3>
+      {!example && (
+      <details className="card">
+        <summary className="cursor-pointer text-sm font-bold text-slate-800">פרטים נוספים</summary>
+        <div className="mt-4 space-y-4">
+        {fallbackCount > 0 && (
+          <p className="text-[11px] text-amber-700">{fallbackCount} מועמדים בלי תאריך יצירה נספרו לפי התאריך המוקדם ביותר שיש להם.</p>
+        )}
+        {withheldPlacements > 0 && (
+          <p className="text-[11px] text-amber-800 leading-relaxed">
+            {withheldPlacements} השמות שויכו ידנית לחודש בלבד, בלי יום מדויק. הן לא נכנסות ל-ROI ולעלות להשמה בטווח הזה, כדי לא להשוות הוצאה יומית או חלקית לכל ההשמות של החודש. בחרו את החודש המלא כדי לכלול אותן.
+          </p>
+        )}
+        {monthPlacements > 0 && (
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            נכללו {monthPlacements} השמות עם שיוך ידני, כי החודש שלהן נמצא במלואו בטווח.
+          </p>
+        )}
+        <h3 className="text-sm font-bold text-slate-500">דיווח יומי ומקורות הגעה</h3>
       {/* ── KPI cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <KPI label="הוצאה"  value={`₪${totalSpend.toLocaleString('he-IL')}`}                          sub={range.label}        color="text-slate-700" />
@@ -557,12 +521,13 @@ export default function MarketingROI({ reports, candidates, positions, exampleOn
       )}
 
       {sourceRows.length === 0 && campaignRows.length === 0 && (
-        <div className="card text-center py-12 text-slate-400">
-          <p className="text-lg mb-2">אין נתונים עדיין</p>
-          <p className="text-sm">הוסף מועמדים עם שדה "מקור" כדי לראות את משפך ההמרה לפי ערוץ</p>
+        <div className="text-center py-6 text-slate-400">
+          <p className="text-sm">אין דיווח יומי או מקור הגעה בטווח הזה</p>
         </div>
       )}
-      </>}
+        </div>
+      </details>
+      )}
     </div>
   )
 }

@@ -42,6 +42,7 @@ function localUpsert(reports: DailyReport[], report: DailyReport): DailyReport[]
 
 export default function App() {
   const [view,          setView]          = useState<View>('management')
+  const [focusCandidate, setFocusCandidate] = useState<{ id: string; token: number } | null>(null)
   const [reports,       setReports]       = useState<DailyReport[]>([])
   const [positions,     setPositions]     = useState<SavedPosition[]>([])
   const [pipeline,      setPipeline]      = useState<PipelineCompany[]>([])
@@ -339,6 +340,10 @@ export default function App() {
           tasks={tasks}
           candidates={candidates}
           onNav={v => handleNav(v)}
+          onOpenCandidate={id => {
+            setFocusCandidate(prev => ({ id, token: (prev?.token ?? 0) + 1 }))
+            handleNav('candidates')
+          }}
         />
       )}
       {view === 'form' && (
@@ -357,7 +362,7 @@ export default function App() {
       {view === 'pipeline'   && <Pipeline pipeline={pipeline} onChange={handlePipelineChange} />}
       {view === 'tasks'      && <Tasks    tasks={tasks}       onChange={handleTasksChange} />}
       {view === 'history'    && <History  reports={reports}   onEdit={handleEdit} onDelete={handleDelete} />}
-      {view === 'candidates' && <Candidates candidates={candidates} positions={positions} onChange={handleCandidatesChange} />}
+      {view === 'candidates' && <Candidates candidates={candidates} positions={positions} onChange={handleCandidatesChange} focusCandidate={focusCandidate} />}
       {view === 'marketing'  && <MarketingROI reports={reports} candidates={candidates} positions={positions} />}
       {view === 'data'       && <DataView candidates={candidates} positions={positions} onChange={handleCandidatesChange} />}
       {view === 'board'      && <Board positions={positions} candidates={candidates} />}

@@ -1,5 +1,6 @@
 import type { Candidate } from '../../types'
 import { candidateAnchor, classifyPlacementForSpendRange, type SpendPlacementKind } from '../candidateAnchor'
+import { calendarDay } from './zone'
 import { attributeLead, type KnownCampaign } from './attributeLead'
 import { addMoney, costOf, emptyMoney, type CostFigure, type MoneyTotals } from './money'
 import { isDropoutStatus, isInterviewStatus, isRelevantStatus } from './stages'
@@ -168,7 +169,7 @@ export function computeAdsMetrics(input: {
   return {
     selection: scope(selected ? 'selection' : 'all', input.selectionLabel || (selected ? 'משרות נבחרות' : 'הכל'), countsFor(selectionLeads, start, end), selectionMoney),
     jobs,
-    unattributed: scope('unattributed', 'לא משויך', countsFor(unattributedLeads, start, end), unmappedMoney),
+    unattributed: scope('unattributed', 'ללא שיוך', countsFor(unattributedLeads, start, end), unmappedMoney),
     usdToIls,
   }
 }
@@ -184,7 +185,7 @@ export function metricLeads(
     return {
       id: candidate.id,
       status: candidate.status,
-      anchorDay: candidateAnchor(candidate).day,
+      anchorDay: calendarDay(candidate.createdAt) || candidateAnchor(candidate).day,
       positionIds: attribution.kind === 'attributed' ? attribution.positionIds : [],
       placementKind: classifyPlacementForSpendRange(candidate, start, end),
     }

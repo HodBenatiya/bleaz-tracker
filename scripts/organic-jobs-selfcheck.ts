@@ -5,8 +5,13 @@ import {
   firstInboundText,
   matchOrganicJob,
   matchingOrganicJobs,
+  humanClicksByJob,
+  organicInProcess,
+  organicPresetRange,
   organicRelevance,
+  summarizeGoClicks,
   summarizeOrganicLeads,
+  summarizeOrganicWindow,
   tagNewOrganicLead,
   withJobNameLine,
 } from '../src/utils/organicJobs.ts'
@@ -121,5 +126,37 @@ const rows = summarizeOrganicLeads([
 assert.equal(rows.length, 2)
 assert.deepEqual(rows[0], { day: '2026-11-19', jobId: 10, leads: 2, relevant: 1, notRelevant: 1, pending: 0 })
 assert.deepEqual(rows[1], { day: '2026-11-18', jobId: 2, leads: 1, relevant: 0, notRelevant: 0, pending: 1 })
+
+assert.equal(organicInProcess('new'), true)
+assert.equal(organicInProcess('call_scheduled'), true)
+assert.equal(organicInProcess('relevant'), false)
+assert.deepEqual(organicPresetRange('today', now), { start: '2026-11-19', end: '2026-11-19', label: 'היום' })
+assert.equal(organicPresetRange('week', now).start, '2026-11-13')
+assert.equal(organicPresetRange('month', now).start, '2026-11-01')
+
+const windowSummary = summarizeOrganicWindow([
+  { id: 'a', name: 'דנה', source: ORGANIC_SOURCE, status: 'future_relevant', organicJob: 10, createdAt: '2026-11-19T08:00:00.000Z' },
+  { id: 'b', name: 'יוסי', source: ORGANIC_SOURCE, status: 'irrelevant', organicJob: 10, createdAt: '2026-11-18T08:00:00.000Z' },
+  { id: 'c', name: 'מיכל', source: ORGANIC_SOURCE, status: 'call_scheduled', organicJob: 2, createdAt: '2026-11-19T08:00:00.000Z' },
+  { id: 'd', name: 'ישן', source: ORGANIC_SOURCE, status: 'new', organicJob: 2, createdAt: '2026-10-01T08:00:00.000Z' },
+  { id: 'e', name: 'אחר', source: 'WhatsApp', status: 'new', organicJob: 10, createdAt: '2026-11-19T08:00:00.000Z' },
+], '2026-11-13', '2026-11-19')
+assert.equal(windowSummary.leads, 3)
+assert.equal(windowSummary.relevant, 1)
+assert.equal(windowSummary.notRelevant, 1)
+assert.equal(windowSummary.inProcess, 1)
+assert.equal(windowSummary.jobs[0].jobId, 10)
+assert.deepEqual(windowSummary.jobs.find(job => job.jobId === 2)?.people.map(person => person.name), ['מיכל'])
+
+const clicks = summarizeGoClicks([
+  { job_id: 10, created_at: '2026-11-19T08:00:00.000Z', is_bot: false },
+  { job_id: 10, created_at: '2026-11-19T09:00:00.000Z', is_bot: true },
+  { job_id: 2, created_at: '2026-11-01T09:00:00.000Z', is_bot: false },
+], now, { start: '2026-11-01', end: '2026-11-19' })
+assert.equal(clicks.reduce((sum, row) => sum + row.clicks, 0), 2)
+assert.deepEqual(humanClicksByJob([
+  { job_id: 10, created_at: '2026-11-19T08:00:00.000Z', is_bot: false },
+  { job_id: 10, created_at: '2026-11-19T09:00:00.000Z', is_bot: true },
+], '2026-11-19', '2026-11-19'), { 10: 1 })
 
 console.log('organic jobs selfcheck ok')

@@ -6,6 +6,7 @@ import { campaignFunnel, type CampaignFunnelRow } from '../utils/metaAds/campaig
 import { campaignIsLive, updatedAgo, visibleCampaigns } from '../utils/metaAds/live'
 import { campaignsFromMaps, computeAdsMetrics, metricLeads, type ScopeMetrics, type SpendSlice } from '../utils/metaAds/metrics'
 import { costOf, formatCost, formatMoney, formatMoneyBag } from '../utils/metaAds/money'
+import { buildTrend, type TrendGrain } from '../utils/metaAds/trend'
 import { METRIC_COPY } from '../utils/metaAds/stages'
 import { placementLabel } from '../utils/metaAds/adMetrics'
 import {
@@ -30,12 +31,11 @@ interface Props {
   example: boolean
 }
 
-const CARDS: { count: keyof ScopeMetrics['counts']; cost: 'costPerLead' | 'costPerRelevant' | 'costPerInterview' | 'costPerPlacement' | 'costPerDropout'; countKey: keyof typeof METRIC_COPY; costKey: keyof typeof METRIC_COPY }[] = [
+const CARDS: { count: keyof ScopeMetrics['counts']; cost: 'costPerLead' | 'costPerRelevant' | 'costPerInterview' | 'costPerPlacement'; countKey: keyof typeof METRIC_COPY; costKey: keyof typeof METRIC_COPY }[] = [
   { count: 'leads', cost: 'costPerLead', countKey: 'leads', costKey: 'costPerLead' },
   { count: 'relevant', cost: 'costPerRelevant', countKey: 'relevant', costKey: 'costPerRelevant' },
   { count: 'interviews', cost: 'costPerInterview', countKey: 'interviews', costKey: 'costPerInterview' },
   { count: 'placements', cost: 'costPerPlacement', countKey: 'placements', costKey: 'costPerPlacement' },
-  { count: 'dropouts', cost: 'costPerDropout', countKey: 'dropouts', costKey: 'costPerDropout' },
 ]
 
 function zoneLabel(timezone: string): string {
@@ -72,7 +72,9 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
   const [rateText, setRateText] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const [mapOpen, setMapOpen] = useState(true)
+  const [mapOpen, setMapOpen] = useState(false)
+  const [grain, setGrain] = useState<TrendGrain | null>(null)
+  const [focusJob, setFocusJob] = useState<string>('all')
   const [mapQuery, setMapQuery] = useState('')
   const [placements, setPlacements] = useState<PlacementSpend[] | null>(null)
   const [addJob, setAddJob] = useState<Record<string, string>>({})
@@ -143,6 +145,21 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
     })
   }, [data, people, jobIds, start, end])
 
+  const trend = useMemo(() => {
+    if (!data || !grain) return []
+    const known = campaignsFromMaps(data.campaigns, data.maps)
+    return buildTrend({
+      spend: data.spend,
+      maps: data.maps,
+      leads: metricLeads(people, known, start, end),
+      jobId: focusJob,
+      usdToIls: data.usdToIls,
+      start,
+      end,
+      grain,
+    })
+  }, [data, people, grain, focusJob, start, end])
+
   async function saveRate() {
     if (example) return
     const trimmed = rateText.trim()
@@ -197,84 +214,126 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
         </div>
       )}
 
-      <div className="card">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs text-slate-500">{METRIC_COPY.spend.hint} · {rangeLabel}</p>
-            <p className="text-3xl font-black text-slate-800 mt-1">{loading ? '…' : spendText}</p>
-            {selection && selection.money.usesRate && selection.money.ils != null && data?.usdToIls && (
-              <p className="text-sm text-slate-600 mt-1">כ־{formatMoney(selection.money.ils, 'ILS')} לפי שער {data.usdToIls} ₪ לדולר</p>
-            )}
-            <p className="text-sm text-slate-500 mt-1">{spendNote}</p>
-          </div>
-          <div className="text-xs text-slate-500 leading-relaxed max-w-sm">
-            {data?.lastSync ? (
-              <p>{data.lastSync.ok ? 'סנכרון אחרון' : 'סנכרון אחרון נכשל'}: {syncLabel(data.lastSync.finishedAt)} {data.lastSync.message && !example ? `· ${data.lastSync.message}` : ''}</p>
-            ) : (
-              <p>{example ? 'בדוגמה אין סנכרון אמיתי' : 'עדיין אין סנכרון. אחרי ההתקנה הוא רץ לבד כל שעה.'}</p>
-            )}
-          </div>
-        </div>
-        {error && <p className="text-sm text-red-700 mt-3">{error}</p>}
-        {selection && selection.counts.placementsWithheld > 0 && (
-          <p className="text-[11px] text-amber-800 mt-3 leading-relaxed">
-            {selection.counts.placementsWithheld} השמות שויכו ידנית לחודש שלא נכנס במלואו לטווח. הן לא נכנסות לעלות להשמה. בחרו את החודש המלא כדי לכלול אותן.
-          </p>
+      <div className="card py-4">
+        <p className="text-xs text-slate-500">{METRIC_COPY.spend.label} · {rangeLabel}</p>
+        <p className="text-3xl sm:text-4xl font-black text-slate-900 mt-1">{loading ? '…' : spendText}</p>
+        {selection && selection.money.usesRate && selection.money.ils != null && data?.usdToIls && (
+          <p className="text-sm text-slate-600 mt-1">כ־{formatMoney(selection.money.ils, 'ILS')} לפי שער {data.usdToIls} ₪ לדולר</p>
         )}
+        <p className="text-xs text-slate-400 mt-1">{spendNote}</p>
+        {data?.historyNote && <p className="text-sm text-amber-800 mt-2">{data.historyNote}</p>}
+        {error && <p className="text-sm text-red-700 mt-2">{error}</p>}
       </div>
 
-      {selection && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {CARDS.map(card => {
-            const figure = formatCost(selection[card.cost], data?.usdToIls ?? null)
-            return (
-              <div key={card.cost} className="card py-3 px-4">
-                <div className="text-xs text-slate-500">{METRIC_COPY[card.costKey].label}</div>
-                <div className="text-xl font-black text-slate-800 mt-1">{figure.primary}</div>
-                <div className="text-[11px] text-slate-400 mt-1">{METRIC_COPY[card.costKey].hint}</div>
-                {figure.note !== 'שקלים' && figure.note !== 'אין עדיין מספר לחלק בו' && (
-                  <div className="text-[11px] text-slate-500 mt-1">{figure.note}</div>
-                )}
-                <div className="text-xs text-slate-600 mt-2">
-                  {selection.counts[card.count]} {METRIC_COPY[card.countKey].label}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {CARDS.map(card => {
+          const figure = selection ? formatCost(selection[card.cost], data?.usdToIls ?? null) : { primary: loading ? '…' : '—', note: '' }
+          const count = selection ? selection.counts[card.count] : 0
+          return (
+            <div key={card.cost} className="card py-3 px-3">
+              <div className="text-[11px] text-slate-500">{METRIC_COPY[card.costKey].label}</div>
+              <div className="text-xl font-black text-slate-900 mt-1">{figure.primary}</div>
+              <div className="text-xs text-slate-500 mt-1">{count} {METRIC_COPY[card.countKey].label}</div>
+            </div>
+          )
+        })}
+      </div>
 
       {report && (
         <div className="card p-0 overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200">
-            <h3 className="text-base font-bold text-slate-800">לפי משרה</h3>
-            <p className="text-xs text-slate-500 mt-0.5">קמפיין שמשויך לכמה משרות — ההוצאה מתחלקת שווה בשווה. ליד עם כמה משרות נספר בכל משרה, ובסיכום הכולל פעם אחת.</p>
+          <div className="px-4 py-3 border-b border-slate-200">
+            <h3 className="text-sm font-bold text-slate-800">לפי משרה</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">ההוצאה לפי שיוך הקמפיין עכשיו, גם לימים שלפני השיוך. הלידים הם מועמדים של המשרה בטווח.</p>
           </div>
-          <div className="overflow-x-auto">
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600 min-w-36">משרה</th>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600">הוצאה</th>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600" title={METRIC_COPY.costPerLead.hint}>עלות לליד</th>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600" title={METRIC_COPY.costPerRelevant.hint}>עלות לרלוונטי</th>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600" title={METRIC_COPY.costPerInterview.hint}>עלות לראיון</th>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600" title={METRIC_COPY.costPerPlacement.hint}>עלות להשמה</th>
-                  <th className="text-right px-3 py-3 font-semibold text-slate-600" title={METRIC_COPY.costPerDropout.hint}>עלות לנפל</th>
+                  <th className="text-right px-3 py-2 font-semibold text-slate-600 min-w-36">משרה</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">הוצאה</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">לידים</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">עלות לליד</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">רלוונטיים</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">עלות לרלוונטי</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">ראיונות</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">עלות לראיון</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">השמות</th>
+                  <th className="text-right px-2 py-2 font-semibold text-slate-600">עלות להשמה</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {report.jobs.map(job => <JobRow key={job.id} job={job} rate={data?.usdToIls ?? null} />)}
-                <JobRow job={report.unattributed} rate={data?.usdToIls ?? null} muted />
+                {report.jobs.map(job => (
+                  <JobRow key={job.id} job={job} rate={data?.usdToIls ?? null} active={focusJob === job.id} onFocus={() => setFocusJob(focusJob === job.id ? 'all' : job.id)} />
+                ))}
+                <JobRow job={report.unattributed} rate={data?.usdToIls ?? null} muted active={focusJob === 'unattributed'} onFocus={() => setFocusJob(focusJob === 'unattributed' ? 'all' : 'unattributed')} />
               </tbody>
             </table>
           </div>
-          <p className="px-5 py-3 text-[11px] text-slate-500 leading-relaxed border-t border-slate-100">
-            לא משויך: קמפיין בלי משרה, או ליד בלי משרה ובלי מקור הגעה שתואם לקמפיין אחד שכבר משויך. המערכת לא מנחשת.
-          </p>
+          <div className="md:hidden divide-y divide-slate-100">
+            {report.jobs.map(job => (
+              <JobCard key={job.id} job={job} rate={data?.usdToIls ?? null} active={focusJob === job.id} onFocus={() => setFocusJob(focusJob === job.id ? 'all' : job.id)} />
+            ))}
+            <JobCard job={report.unattributed} rate={data?.usdToIls ?? null} muted active={focusJob === 'unattributed'} onFocus={() => setFocusJob(focusJob === 'unattributed' ? 'all' : 'unattributed')} />
+          </div>
+          <div className="px-4 py-3 border-t border-slate-100 space-y-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-500">פירוט</span>
+              {(['day', 'week', 'month'] as TrendGrain[]).map(item => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setGrain(current => current === item ? null : item)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${grain === item ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}
+                >
+                  {item === 'day' ? 'יומי' : item === 'week' ? 'שבועי' : 'חודשי'}
+                </button>
+              ))}
+              {focusJob !== 'all' && (
+                <button type="button" onClick={() => setFocusJob('all')} className="text-[11px] font-semibold text-slate-500">כל המשרות</button>
+              )}
+            </div>
+            {grain && trend.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400">
+                      <th className="text-right font-medium py-1">תקופה</th>
+                      <th className="text-right font-medium py-1">הוצאה</th>
+                      <th className="text-right font-medium py-1">לידים</th>
+                      <th className="text-right font-medium py-1">עלות לליד</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trend.map(point => (
+                      <tr key={point.key} className="border-t border-slate-100 text-slate-700">
+                        <td className="py-1 whitespace-nowrap">{point.label}</td>
+                        <td className="py-1 whitespace-nowrap">{formatMoneyBag(point.spend.byCurrency)}</td>
+                        <td className="py-1">{point.leads}</td>
+                        <td className="py-1 whitespace-nowrap">{formatCost(point.costPerLead, data?.usdToIls ?? null).primary}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-[11px] text-slate-400 leading-relaxed">ללא שיוך נספר בסכום הכולל. בסינון משרה הוא נשאר בשורה שלו.</p>
+          </div>
         </div>
       )}
 
+      <details className="card">
+        <summary className="cursor-pointer text-sm font-bold text-slate-800">שער, מיקומים וקמפיינים</summary>
+        <div className="mt-3 space-y-4">
+          {data?.lastSync ? (
+            <p className="text-xs text-slate-500">{data.lastSync.ok ? 'סנכרון אחרון' : 'סנכרון אחרון נכשל'}: {syncLabel(data.lastSync.finishedAt)} {data.lastSync.message && !example ? `· ${data.lastSync.message}` : ''}</p>
+          ) : (
+            <p className="text-xs text-slate-500">{example ? 'בדוגמה אין סנכרון אמיתי' : 'עדיין אין סנכרון. אחרי ההתקנה הוא רץ לבד.'}</p>
+          )}
+          {selection && selection.counts.placementsWithheld > 0 && (
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              {selection.counts.placementsWithheld} השמות שויכו ידנית לחודש שלא נכנס במלואו לטווח. הן לא נכנסות לעלות להשמה. בחרו את החודש המלא כדי לכלול אותן.
+            </p>
+          )}
       {placementRows.length > 0 && (
         <div className="card">
           <h3 className="text-base font-bold text-slate-800">איפה המודעה רצה</h3>
@@ -431,6 +490,8 @@ export default function AdsAnalytics({ candidates, positions, start, end, rangeL
           </div>
         )}
       </div>
+        </div>
+      </details>
     </div>
   )
 }
@@ -458,19 +519,58 @@ function CampaignFigures({ stats, todayText, rate }: { stats?: CampaignFunnelRow
   )
 }
 
-function JobRow({ job, rate, muted = false }: { job: ScopeMetrics; rate: number | null; muted?: boolean }) {
-  const cells = [job.costPerLead, job.costPerRelevant, job.costPerInterview, job.costPerPlacement, job.costPerDropout]
-  const counts = [job.counts.leads, job.counts.relevant, job.counts.interviews, job.counts.placements, job.counts.dropouts]
+function costText(job: ScopeMetrics, key: 'costPerLead' | 'costPerRelevant' | 'costPerInterview' | 'costPerPlacement', rate: number | null): string {
+  return formatCost(job[key], rate).primary
+}
+
+function JobCells({ job, rate }: { job: ScopeMetrics; rate: number | null }) {
   return (
-    <tr className={muted ? 'bg-amber-50/60' : 'hover:bg-slate-50'}>
-      <td className="px-3 py-3 font-medium text-slate-800">{job.label}</td>
-      <td className="px-3 py-3 text-slate-700 whitespace-nowrap">{formatMoneyBag(job.money.byCurrency)}</td>
-      {cells.map((figure, index) => (
-        <td key={index} className="px-3 py-3 text-slate-700 whitespace-nowrap">
-          <div>{formatCost(figure, rate).primary}</div>
-          <div className="text-[10px] text-slate-400">{counts[index]}</div>
-        </td>
-      ))}
+    <>
+      <td className="px-2 py-2 text-slate-700 whitespace-nowrap">{formatMoneyBag(job.money.byCurrency)}</td>
+      <td className="px-2 py-2 text-slate-800">{job.counts.leads}</td>
+      <td className="px-2 py-2 text-slate-700 whitespace-nowrap">{costText(job, 'costPerLead', rate)}</td>
+      <td className="px-2 py-2 text-slate-800">{job.counts.relevant}</td>
+      <td className="px-2 py-2 text-slate-700 whitespace-nowrap">{costText(job, 'costPerRelevant', rate)}</td>
+      <td className="px-2 py-2 text-slate-800">{job.counts.interviews}</td>
+      <td className="px-2 py-2 text-slate-700 whitespace-nowrap">{costText(job, 'costPerInterview', rate)}</td>
+      <td className="px-2 py-2 text-slate-800">{job.counts.placements}</td>
+      <td className="px-2 py-2 text-slate-700 whitespace-nowrap">{costText(job, 'costPerPlacement', rate)}</td>
+    </>
+  )
+}
+
+function JobRow({ job, rate, muted = false, active = false, onFocus }: { job: ScopeMetrics; rate: number | null; muted?: boolean; active?: boolean; onFocus: () => void }) {
+  return (
+    <tr className={muted ? 'bg-amber-50/70' : active ? 'bg-slate-50' : 'hover:bg-slate-50'}>
+      <td className="px-3 py-2 font-medium text-slate-800">
+        <button type="button" onClick={onFocus} className="text-right">{job.label}</button>
+      </td>
+      <JobCells job={job} rate={rate} />
     </tr>
+  )
+}
+
+function JobCard({ job, rate, muted = false, active = false, onFocus }: { job: ScopeMetrics; rate: number | null; muted?: boolean; active?: boolean; onFocus: () => void }) {
+  const pairs = [
+    ['לידים', String(job.counts.leads), costText(job, 'costPerLead', rate)],
+    ['רלוונטיים', String(job.counts.relevant), costText(job, 'costPerRelevant', rate)],
+    ['ראיונות', String(job.counts.interviews), costText(job, 'costPerInterview', rate)],
+    ['השמות', String(job.counts.placements), costText(job, 'costPerPlacement', rate)],
+  ]
+  return (
+    <button type="button" onClick={onFocus} className={`w-full text-right px-4 py-3 ${muted ? 'bg-amber-50/70' : ''} ${active ? 'ring-1 ring-inset ring-slate-300' : ''}`}>
+      <div className="flex items-start justify-between gap-3">
+        <span className="font-semibold text-slate-800">{job.label}</span>
+        <span className="font-black text-slate-900 whitespace-nowrap">{formatMoneyBag(job.money.byCurrency)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mt-2">
+        {pairs.map(([label, count, cost]) => (
+          <div key={label} className="rounded-lg bg-white/80 border border-slate-100 px-2 py-1.5">
+            <div className="text-[10px] text-slate-400">{label}</div>
+            <div className="text-sm font-bold text-slate-800">{count} <span className="font-medium text-slate-500">· {cost}</span></div>
+          </div>
+        ))}
+      </div>
+    </button>
   )
 }

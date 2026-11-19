@@ -42,6 +42,9 @@ export const ORGANIC_RELEVANT_STATUSES = [
 /** Rejected or not suitable. */
 export const ORGANIC_NOT_RELEVANT_STATUSES = ['irrelevant'] as const
 
+/** Still being screened. */
+export const ORGANIC_IN_PROCESS_STATUSES = ['new', 'screening', 'call_scheduled', 'called'] as const
+
 const PLACEHOLDER_SOURCES = new Set(['', 'whatsapp'])
 const VARIANTS = new Set(['A', 'B', 'C', 'D'])
 
@@ -155,6 +158,22 @@ export function organicRelevance(status: string | undefined): OrganicRelevance {
   return 'pending'
 }
 
+export function organicInProcess(status: string | undefined): boolean {
+  return !!status && (ORGANIC_IN_PROCESS_STATUSES as readonly string[]).includes(status)
+}
+
+export type OrganicPreset = 'today' | 'week' | 'month'
+
+export function organicPresetRange(preset: OrganicPreset, now = new Date()): { start: string; end: string; label: string } {
+  const end = jerusalemDay(now)
+  if (preset === 'today') return { start: end, end, label: 'היום' }
+  if (preset === 'week') {
+    const days = recentJerusalemDays(7, now)
+    return { start: days[days.length - 1] || end, end, label: '7 ימים' }
+  }
+  return { start: `${end.slice(0, 8)}01`, end, label: 'החודש' }
+}
+
 export function jerusalemDay(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return ''
@@ -202,10 +221,112 @@ export function summarizeOrganicLeads(
     const bucket = organicRelevance(candidate.status)
     if (bucket === 'relevant') row.relevant += 1
     else if (bucket === 'not_relevant') row.notRelevant += 1
-    else row.pending += 1
+    else if (organicInProcess(candidate.status)) row.pending += 1
     grouped.set(key, row)
   }
   return [...grouped.values()].sort((a, b) => (
     b.day.localeCompare(a.day) || (a.jobId ?? 99) - (b.jobId ?? 99)
   ))
+}
+
+export interface OrganicPerson {
+  id: string
+  name: string
+  status: string
+}
+
+export interface OrganicJobWindow {
+  jobId: number | null
+  leads: number
+  relevant: number
+  notRelevant: number
+  inProcess: number
+  people: OrganicPerson[]
+}
+
+export interface OrganicWindow {
+  leads: number
+  relevant: number
+  notRelevant: number
+  inProcess: number
+  jobs: OrganicJobWindow[]
+}
+
+/** Same status rules as the management card, over any Jerusalem date range. */
+export function summarizeOrganicWindow(
+  candidates: Array<{ id?: string; name?: string; source?: string; status?: string; organicJob?: number | null; createdAt?: string }>,
+  start: string,
+  end: string,
+): OrganicWindow {
+  const jobs = new Map<string, OrganicJobWindow>()
+  const totals = { leads: 0, relevant: 0, notRelevant: 0, inProcess: 0 }
+  for (const candidate of candidates) {
+    if (candidate.source !== ORGANIC_SOURCE) continue
+    const day = candidate.createdAt ? jerusalemDay(candidate.createdAt) : ''
+    if (!day || day < start || day > end) continue
+    const jobId = typeof candidate.organicJob === 'number' ? candidate.organicJob : null
+    const key = jobId == null ? '' : String(jobId)
+    const row = jobs.get(key) ?? { jobId, leads: 0, relevant: 0, notRelevant: 0, inProcess: 0, people: [] }
+    row.leads += 1
+    totals.leads += 1
+    const bucket = organicRelevance(candidate.status)
+    if (bucket === 'relevant') { row.relevant += 1; totals.relevant += 1 }
+    else if (bucket === 'not_relevant') { row.notRelevant += 1; totals.notRelevant += 1 }
+    if (organicInProcess(candidate.status)) { row.inProcess += 1; totals.inProcess += 1 }
+    if (candidate.id) row.people.push({ id: candidate.id, name: candidate.name || 'ללא שם', status: candidate.status || '' })
+    jobs.set(key, row)
+  }
+  const list = [...jobs.values()].sort((a, b) => b.leads - a.leads || (a.jobId ?? 99) - (b.jobId ?? 99))
+  for (const row of list) row.people.sort((a, b) => a.name.localeCompare(b.name, 'he'))
+  return { ...totals, jobs: list }
+}
+
+export interface GoClickRow {
+  job_id: number
+  variant?: string | null
+  group_id?: string | null
+  created_at: string
+  is_bot?: boolean | null
+}
+
+export interface ClickSummary {
+  day: string
+  jobId: number
+  variant: string | null
+  groupId: string | null
+  clicks: number
+}
+
+/** Human /go clicks. `is_bot === true` is skipped. Without a range, the last 14 Jerusalem days. */
+export function summarizeGoClicks(
+  rows: GoClickRow[],
+  now = new Date(),
+  range?: { start: string; end: string },
+): ClickSummary[] {
+  const days = range ? null : new Set(recentJerusalemDays(14, now))
+  const grouped = new Map<string, ClickSummary>()
+  for (const row of rows) {
+    if (row.is_bot) continue
+    const day = jerusalemDay(row.created_at)
+    if (!day) continue
+    if (days && !days.has(day)) continue
+    if (range && (day < range.start || day > range.end)) continue
+    const variant = row.variant || null
+    const groupId = row.group_id || null
+    const key = `${day}:${row.job_id}:${variant ?? ''}:${groupId ?? ''}`
+    const current = grouped.get(key) ?? { day, jobId: row.job_id, variant, groupId, clicks: 0 }
+    current.clicks += 1
+    grouped.set(key, current)
+  }
+  return [...grouped.values()].sort((a, b) => (
+    b.day.localeCompare(a.day) || a.jobId - b.jobId || String(a.variant ?? '').localeCompare(String(b.variant ?? ''))
+  ))
+}
+
+export function humanClicksByJob(rows: GoClickRow[], start: string, end: string): Record<number, number> {
+  const totals: Record<number, number> = {}
+  for (const row of summarizeGoClicks(rows, new Date(), { start, end })) {
+    totals[row.jobId] = (totals[row.jobId] ?? 0) + row.clicks
+  }
+  return totals
 }

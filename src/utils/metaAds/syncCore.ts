@@ -133,6 +133,41 @@ export interface IsraelSlice {
   resultAction: string
 }
 
+/**
+ * Daily insights (`time_increment=1`, no hourly breakdown).
+ * Hourly rows with no hour are dropped by `bucketToIsraelDays`, which left
+ * every closed day empty when Meta omitted the hour. These slices keep the
+ * reporting date Meta returned (`date_start`).
+ */
+export function dailyInsightSlices(rows: MetaInsightRow[], fallbackCurrency: string): IsraelSlice[] {
+  const grouped = new Map<string, IsraelSlice>()
+  for (const raw of rows) {
+    const row = parseInsightRow(raw, fallbackCurrency)
+    if (!row) continue
+    const key = `${row.campaignId}|${row.accountDate}`
+    const current = grouped.get(key) ?? {
+      campaignId: row.campaignId,
+      campaignName: row.campaignName,
+      currency: row.currency,
+      date: row.accountDate,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      results: 0,
+      resultAction: row.resultAction,
+    }
+    current.campaignName = row.campaignName || current.campaignName
+    current.currency = row.currency || current.currency
+    current.spend += row.spend
+    current.impressions += row.impressions
+    current.clicks += row.clicks
+    current.results += row.results
+    if (!current.resultAction && row.resultAction) current.resultAction = row.resultAction
+    grouped.set(key, current)
+  }
+  return [...grouped.values()]
+}
+
 export function bucketToIsraelDays(rows: ParsedHour[], accountTimeZone: string): IsraelSlice[] {
   const grouped = new Map<string, IsraelSlice>()
   for (const row of rows) {
