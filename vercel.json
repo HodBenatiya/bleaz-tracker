@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/api/landing-event", "destination": "/api/apply" },
+    { "source": "/go/:jobId", "destination": "/api/apply?go=:jobId" },
     { "source": "/jobs", "destination": "/jobs/index.html" },
     { "source": "/jobs/", "destination": "/jobs/index.html" },
     { "source": "/login", "destination": "/index.html" },
