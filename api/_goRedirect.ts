@@ -78,8 +78,9 @@ export function queryParam(req: GoRequest, key: string): string | null {
 }
 
 /**
- * One row per counted GET. Failures (missing table, network, bad env) are logged
- * and swallowed so the redirect already sent still stands.
+ * One row per counted GET. Failures are logged and swallowed.
+ * The caller awaits this before the redirect, capped at 800ms, so Vercel
+ * does not freeze the isolate before the insert finishes.
  */
 export async function recordGoClick(jobId: number, groupId: string | null, variant: string | null): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -113,11 +114,13 @@ export default async function handleGoRedirect(
   const jobId = parseJobId(queryParam(req, 'go'))
   const groupId = sanitizeGroupId(queryParam(req, 'g'))
   const variant = sanitizeVariant(queryParam(req, 'v'))
+  if (jobId != null && shouldRecordGoClick(req.method, jobId)) {
+    await record(jobId, groupId, variant)
+  }
   res.statusCode = 302
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('Location', whatsappLocation(jobId))
   res.end()
-  if (jobId != null && shouldRecordGoClick(req.method, jobId)) await record(jobId, groupId, variant)
 }
 
 function coerceQueryValue(raw: unknown): string {
